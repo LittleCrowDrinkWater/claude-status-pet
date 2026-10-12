@@ -71,8 +71,7 @@ claude-status-pet/
 │   ├── release.yml          # CI: builds binaries + asset zip on version tags
 │   └── test.yml             # CI: runs cargo test on every push to main
 ├── CONTRIBUTING.md          # Adding characters + adapters
-├── README.md                # User-facing (English)
-└── README.zh-CN.md          # User-facing (Chinese)
+└── README.md                # User-facing (Chinese; this fork's install and usage)
 ```
 
 ## Binary Modes
