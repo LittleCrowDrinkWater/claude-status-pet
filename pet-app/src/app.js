@@ -455,6 +455,14 @@ function buildMenu() {
   if (menuPage === 'config') { buildConfigPage(); return; }
   if (menuPage === 'ascii') { buildAsciiPage(); return; }
   if (menuPage === 'dlc') { buildDlcPage(); return; }
+  if (menuPage === 'sessions') { buildSessionsPage(); return; }
+
+  if (aggregateMode) {
+    const pinned = aggregateSessions.find(s => s.session_id === pinnedSessionId);
+    const summary = pinned ? 'pinned: ' + sessionLabel(pinned) : aggregateSessions.length + ' active';
+    addMenuItem(charMenu, 'Sessions (' + summary + ') ▸', () => { menuPage = 'sessions'; buildMenu(); });
+    addDivider(charMenu);
+  }
 
   // Bundled: Ferris
   addMenuItem(charMenu, 'Ferris (SVG)', () => selectChar('ferris'), mode === 'ferris' ? 'active' : '');
@@ -708,18 +716,145 @@ async function bindToSession(sessionId) {
   }
 }
 
+// ── Aggregate mode (run --all): one pet showing the most urgent of all sessions ──
+const STATE_PRIORITY = { waiting: 5, error: 4, reading: 3, editing: 3, searching: 3, running: 3, delegating: 3, thinking: 2, idle: 1 };
+const WORKING_STATES = new Set(['thinking', 'reading', 'editing', 'searching', 'running', 'delegating']);
+// A crashed session never sends Stop, so a working state this old is treated as idle
+const STALE_WORKING_MS = 10 * 60 * 1000;
+const ERROR_VISIBLE_MS = 2 * 60 * 1000;
+const HIDE_SESSION_AFTER_MS = 6 * 60 * 60 * 1000;
+// Hold the shown session this long so several busy sessions don't make the pet flicker
+const MIN_DISPLAY_MS = 1000;
+
+let aggregateMode = false;
+let aggregateSessions = [];
+let pinnedSessionId = '';
+let displayedSessionId = '';
+let displayedSince = 0;
+let lastAggregateKey = '';
+let aggregateRenderTimer = null;
+
+function sessionPriority(session) {
+  return STATE_PRIORITY[session.state] || 0;
+}
+
+function effectiveState(session, now) {
+  const age = now - session.last_modified;
+  if (WORKING_STATES.has(session.state) && age > STALE_WORKING_MS) return 'idle';
+  if (session.state === 'error' && age > ERROR_VISIBLE_MS) return 'idle';
+  return session.state;
+}
+
+function sessionLabel(session) {
+  const name = session.session_name || session.session_id.slice(0, 8);
+  const sameName = aggregateSessions.filter(s => s.session_name === session.session_name).length > 1;
+  return sameName ? name + '·' + session.session_id.slice(0, 4) : name;
+}
+
+function formatAge(ms) {
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return minutes + 'm';
+  return Math.floor(minutes / 60) + 'h';
+}
+
+async function refreshSessions() {
+  const now = Date.now();
+  let sessions = [];
+  try { sessions = await window.__TAURI__.core.invoke('list_all_sessions'); } catch (e) { return; }
+  aggregateSessions = sessions
+    .filter(s => s.state !== 'closed' && now - s.last_modified < HIDE_SESSION_AFTER_MS)
+    .map(s => ({ ...s, state: effectiveState(s, now) }))
+    .sort((a, b) => sessionPriority(b) - sessionPriority(a) || b.last_modified - a.last_modified);
+  if (pinnedSessionId && !aggregateSessions.some(s => s.session_id === pinnedSessionId)) pinnedSessionId = '';
+  renderAggregate();
+}
+
+function renderAggregate() {
+  clearTimeout(aggregateRenderTimer);
+  if (aggregateSessions.length === 0) {
+    displayedSessionId = '';
+    applyAggregateStatus({ state: 'offline', detail: '', session_name: 'No session' });
+    return;
+  }
+  let pick = aggregateSessions.find(s => s.session_id === pinnedSessionId) || aggregateSessions[0];
+  const current = aggregateSessions.find(s => s.session_id === displayedSessionId);
+  const heldFor = Date.now() - displayedSince;
+  if (!pinnedSessionId && current && pick !== current && heldFor < MIN_DISPLAY_MS
+      && sessionPriority(pick) <= sessionPriority(current)) {
+    aggregateRenderTimer = setTimeout(renderAggregate, MIN_DISPLAY_MS - heldFor);
+    pick = current;
+  }
+  if (pick.session_id !== displayedSessionId) {
+    displayedSessionId = pick.session_id;
+    displayedSince = Date.now();
+  }
+  const otherBusy = aggregateSessions.filter(s => s !== pick && (WORKING_STATES.has(s.state) || s.state === 'waiting')).length;
+  const label = sessionLabel(pick) + (otherBusy ? ' +' + otherBusy : '');
+  applyAggregateStatus({ state: pick.state, detail: pick.detail, session_name: label });
+}
+
+// Polling re-renders the same status every few seconds; skip unchanged ones so the idle bubble can time out
+function applyAggregateStatus(status) {
+  const key = status.state + '|' + status.detail + '|' + status.session_name;
+  if (key === lastAggregateKey) return;
+  lastAggregateKey = key;
+  updateStatus(status);
+}
+
+function buildSessionsPage() {
+  addMenuItem(charMenu, '← Back', () => { menuPage = 'main'; buildMenu(); });
+  addDivider(charMenu);
+  addMenuItem(charMenu, 'Auto (most urgent)', () => {
+    pinnedSessionId = '';
+    lastAggregateKey = '';
+    closeMenu();
+    renderAggregate();
+  }, pinnedSessionId ? '' : 'active');
+  const now = Date.now();
+  for (const session of aggregateSessions) {
+    const text = sessionLabel(session) + ' · ' + session.state + ' · ' + formatAge(now - session.last_modified);
+    addMenuItem(charMenu, text, () => {
+      pinnedSessionId = session.session_id;
+      lastAggregateKey = '';
+      closeMenu();
+      renderAggregate();
+    }, pinnedSessionId === session.session_id ? 'active' : '');
+  }
+}
+
+async function startAggregateMode() {
+  aggregateMode = true;
+  let refreshTimer = null;
+  window.__TAURI__.event.listen('sessions-changed', () => {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refreshSessions, 150);
+  });
+  // Staleness thresholds are time based, so re-evaluate even when no file changes
+  setInterval(refreshSessions, 5000);
+  await refreshSessions();
+}
+
 // ── Listen for status updates ──
 if (window.__TAURI__) {
-  window.__TAURI__.event.listen('status-update', (e) => updateStatus(e.payload));
-  window.__TAURI__.core.invoke('get_session_id').then((sid) => {
-    if (sid) {
-      boundSessionId = sid;
-    } else {
-      // No explicit session — show session picker
-      showSessionPicker();
+  // Another topmost window (task manager, a player's mini window) can cover the pet; re-assert periodically
+  setInterval(() => { window.__TAURI__.window.getCurrentWindow().setAlwaysOnTop(true).catch(() => {}); }, 2000);
+  window.__TAURI__.core.invoke('is_aggregate_mode').then((isAggregate) => {
+    if (isAggregate) {
+      startAggregateMode();
+      return;
     }
+    window.__TAURI__.event.listen('status-update', (e) => updateStatus(e.payload));
+    window.__TAURI__.core.invoke('get_session_id').then((sid) => {
+      if (sid) {
+        boundSessionId = sid;
+      } else {
+        // No explicit session — show session picker
+        showSessionPicker();
+      }
+    });
+    window.__TAURI__.core.invoke('get_status').then((s) => { if (s) updateStatus(s); });
   });
-  window.__TAURI__.core.invoke('get_status').then((s) => { if (s) updateStatus(s); });
 } else {
   const demos = [
     { state: 'idle', detail: 'Waiting...' },
@@ -895,5 +1030,11 @@ async function preloadAssets() {
   }
 
   applyConfig();
-  updateStatus({ state: 'idle', detail: '' });
+  if (aggregateMode) {
+    // Character packs finished loading after the first aggregate render; draw again with them
+    lastAggregateKey = '';
+    renderAggregate();
+  } else {
+    updateStatus({ state: 'idle', detail: '' });
+  }
 })();

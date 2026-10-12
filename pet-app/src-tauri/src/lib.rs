@@ -110,6 +110,54 @@ struct SessionInfo {
 
 #[tauri::command]
 fn list_unlocked_sessions() -> Vec<SessionInfo> {
+    collect_sessions(true)
+}
+
+/// Every session with a status file, including ones already bound to a per-session pet.
+#[tauri::command]
+fn list_all_sessions() -> Vec<SessionInfo> {
+    collect_sessions(false)
+}
+
+/// Marks the GUI launched with `run --all`: one window aggregating every session.
+struct AggregateMode(bool);
+
+#[tauri::command]
+fn is_aggregate_mode(mode: tauri::State<'_, AggregateMode>) -> bool {
+    mode.0
+}
+
+/// Pings the frontend whenever any status-*.json changes; the frontend then re-reads
+/// the whole list via list_all_sessions, so the payload carries no data.
+fn spawn_sessions_watcher(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let pet_dir = default_pet_dir();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = match notify::recommended_watcher(tx) {
+            Ok(w) => w,
+            Err(e) => {
+                debug_log(&pet_dir, &format!("FATAL: aggregate watcher init failed: {}", e));
+                return;
+            }
+        };
+        if let Err(e) = watcher.watch(&pet_dir, RecursiveMode::NonRecursive) {
+            debug_log(&pet_dir, &format!("FATAL: aggregate watch() failed: {}", e));
+            return;
+        }
+        for event in rx.into_iter().flatten() {
+            let touches_status = event.paths.iter().any(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy())
+                    .is_some_and(|n| n.starts_with("status-") && n.ends_with(".json"))
+            });
+            if touches_status {
+                let _ = handle.emit("sessions-changed", ());
+            }
+        }
+    });
+}
+
+fn collect_sessions(skip_locked: bool) -> Vec<SessionInfo> {
     let pet_dir = default_pet_dir();
     let Ok(entries) = fs::read_dir(&pet_dir) else { return vec![] };
     let mut sessions = Vec::new();
@@ -118,13 +166,15 @@ fn list_unlocked_sessions() -> Vec<SessionInfo> {
         let name_str = name.to_string_lossy().to_string();
         if name_str.starts_with("status-") && name_str.ends_with(".json") {
             let sid = name_str.strip_prefix("status-").unwrap().strip_suffix(".json").unwrap().to_string();
-            let lock_file = pet_dir.join(format!("pet-{}.lock", sid));
-            if is_lock_alive(&lock_file) {
-                continue; // already has a running pet
-            }
-            // Clean up dead lock file
-            if lock_file.exists() {
-                let _ = fs::remove_file(&lock_file);
+            if skip_locked {
+                let lock_file = pet_dir.join(format!("pet-{}.lock", sid));
+                if is_lock_alive(&lock_file) {
+                    continue; // already has a running pet
+                }
+                // Clean up dead lock file
+                if lock_file.exists() {
+                    let _ = fs::remove_file(&lock_file);
+                }
             }
             let status_path = entry.path();
             let last_modified = status_path.metadata()
@@ -838,6 +888,7 @@ pub fn run() {
     }
 
     let demo_mode = args.iter().any(|a| a == "--demo");
+    let aggregate_mode = args.iter().any(|a| a == "--all");
 
     let explicit_status = args.windows(2).find(|w| w[0] == "--status-file").map(|w| PathBuf::from(&w[1]));
     let explicit_session = args.windows(2).find(|w| w[0] == "--session-id").map(|w| w[1].clone());
@@ -854,12 +905,23 @@ pub fn run() {
         }
         write_lock_file(&lock_file);
         (sf.clone(), sid, Some(lock_file))
+    } else if aggregate_mode {
+        // One aggregate pet for all sessions; a SessionStart hook may launch it many times.
+        let pet_dir = default_pet_dir();
+        let _ = fs::create_dir_all(&pet_dir);
+        let lock_file = pet_dir.join("pet-all.lock");
+        if is_lock_alive(&lock_file) {
+            eprintln!("Aggregate pet already running");
+            std::process::exit(0);
+        }
+        write_lock_file(&lock_file);
+        (default_status_path(), String::new(), Some(lock_file))
     } else {
         // No explicit session — will show session picker in frontend
         (default_status_path(), String::new(), None)
     };
 
-    let needs_session_select = explicit_status.is_none() && !demo_mode;
+    let needs_session_select = explicit_status.is_none() && !demo_mode && !aggregate_mode;
 
     let assets_dir: Option<PathBuf> = args
         .windows(2)
@@ -885,7 +947,8 @@ pub fn run() {
         .manage(session_id_shared)
         .manage(lock_path_shared)
         .manage(assets_dir)
-        .invoke_handler(tauri::generate_handler![get_status, get_session_id, get_assets_dir, load_asset, load_text_asset, load_custom_asset, is_dlc_installed, download_dlc, list_available_dlcs, list_character_packs, list_unlocked_sessions, bind_session, update_assets])
+        .manage(AggregateMode(aggregate_mode))
+        .invoke_handler(tauri::generate_handler![get_status, get_session_id, get_assets_dir, load_asset, load_text_asset, load_custom_asset, is_dlc_installed, download_dlc, list_available_dlcs, list_character_packs, list_unlocked_sessions, list_all_sessions, is_aggregate_mode, bind_session, update_assets])
         .setup(move |app| {
             let window = app.get_webview_window("main").unwrap();
 
@@ -913,6 +976,8 @@ pub fn run() {
             if needs_session_select {
                 // Frontend will query for session selection on init
                 // (emit is unreliable here — JS may not have loaded listeners yet)
+            } else if aggregate_mode {
+                spawn_sessions_watcher(handle);
             } else if demo_mode {
                 // Demo mode: cycle through all states for recording
                 std::thread::spawn(move || {
