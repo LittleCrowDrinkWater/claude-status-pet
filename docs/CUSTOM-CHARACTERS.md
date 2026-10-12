@@ -76,6 +76,7 @@ Create `<pack-dir>/character.json`:
 - Image paths are relative to the `assets/` or `characters/` parent directory, prefixed with the pack name
 - Each state value is an **array** of paths (for random variety)
 - `name` is what appears in the right-click menu
+- Optional `"motion": "none"` turns off the app's per-state CSS motion (float, wiggle, pulse) for this character. Use it when the images are frame animations (animated GIF or APNG saved as `.png`) that already express each state, so the two motions don't stack. Users can also turn motion off for every character via right-click → Settings → Motion.
 
 ## Step 4: Verify
 

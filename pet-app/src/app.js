@@ -136,6 +136,15 @@ const ASCII_SPECIES = {
 
 // GIF character maps loaded from character.json files (populated at init)
 const GIF_MODES = {};
+// Packs whose character.json sets "motion": "none" ship their own frame animation
+const STATIC_MOTION_PACKS = new Set();
+
+function registerCharacter(id, jsonStr) {
+  const config = JSON.parse(jsonStr);
+  GIF_MODES[id] = config.states;
+  if (config.motion === 'none') STATIC_MOTION_PACKS.add(id);
+  else STATIC_MOTION_PACKS.delete(id);
+}
 
 // Ferris SVG map loaded from character.json (populated at init, fallback to hardcoded)
 let FERRIS_SVG_MAP = {
@@ -162,6 +171,7 @@ let petTextColor = localStorage.getItem('petTextColor') || '';
 let petSessionBg = localStorage.getItem('petSessionBg') || '';
 let petFontSize = parseInt(localStorage.getItem('petFontSize') || '16');
 let petScale = parseFloat(localStorage.getItem('petScale') || '1');
+let petMotion = localStorage.getItem('petMotion') !== 'off';
 let currentState = 'idle';
 let currentImgSrc = '';
 let bubbleTimeout = null;
@@ -212,6 +222,8 @@ function applyConfig() {
   stateLabel.style.fontSize = Math.round(12 * petScale) + 'px';
   bubble.style.maxWidth = Math.round(180 * petScale) + 'px';
 
+  applyMotion();
+
   // Resize window to match
   if (window.__TAURI__) {
     const w = Math.round(200 * petScale);
@@ -226,6 +238,12 @@ function applyConfig() {
 function saveConfig(key, value) {
   localStorage.setItem(key, value);
   applyConfig();
+}
+
+// Per-state CSS motion (float, wiggle, pulse...) layered on top of the character image
+function applyMotion() {
+  const enabled = petMotion && !STATIC_MOTION_PACKS.has(mode);
+  document.body.classList.toggle('no-motion', !enabled);
 }
 
 // ── Renderers ──
@@ -507,6 +525,13 @@ function buildConfigPage() {
   addColorRow(charMenu, 'Label', petSessionBg, '#e06c3c', (v) => { petSessionBg = v; saveConfig('petSessionBg', v); }, true);
   addColorRow(charMenu, 'ASCII Fill', petFillColor, '#ffffff', (v) => { petFillColor = v; saveConfig('petFillColor', v); });
   addColorRow(charMenu, 'Background', petBgColor, '#ffffff', (v) => { petBgColor = v; saveConfig('petBgColor', v); });
+  const packOverridesMotion = STATIC_MOTION_PACKS.has(mode);
+  const motionLabel = 'Motion: ' + (petMotion ? 'On' : 'Off') + (packOverridesMotion ? ' (off for this character)' : '');
+  addMenuItem(charMenu, motionLabel, () => {
+    petMotion = !petMotion;
+    saveConfig('petMotion', petMotion ? 'on' : 'off');
+    buildMenu();
+  });
   addDivider(charMenu);
   addMenuItem(charMenu, 'Update Assets', async () => {
     closeMenu();
@@ -542,10 +567,10 @@ function buildConfigPage() {
   });
   addDivider(charMenu);
   addMenuItem(charMenu, 'Reset Default', () => {
-    petScale = 1; petTextColor = ''; petSessionBg = ''; petFillColor = ''; petBgColor = '';
+    petScale = 1; petTextColor = ''; petSessionBg = ''; petFillColor = ''; petBgColor = ''; petMotion = true;
     localStorage.removeItem('petScale'); localStorage.removeItem('petTextColor');
     localStorage.removeItem('petSessionBg'); localStorage.removeItem('petFillColor');
-    localStorage.removeItem('petBgColor');
+    localStorage.removeItem('petBgColor'); localStorage.removeItem('petMotion');
     applyConfig();
     buildConfigPage();
   }, 'menu-item-danger');
@@ -590,8 +615,7 @@ async function downloadAndSelectDlc(dlcName) {
     try {
       const jsonStr = await window.__TAURI__.core.invoke('load_text_asset', { path: dlcName + '/character.json' });
       if (jsonStr) {
-        const config = JSON.parse(jsonStr);
-        GIF_MODES[dlcName] = config.states;
+        registerCharacter(dlcName, jsonStr);
       }
     } catch(e) {}
     await selectChar(dlcName);
@@ -609,6 +633,7 @@ async function selectChar(newMode) {
   mode = newMode;
   localStorage.setItem('petMode', mode);
   closeMenu();
+  applyMotion();
   currentImgSrc = '';
   imgEl.src = '';
 
@@ -810,7 +835,7 @@ async function preloadAssets() {
           try {
             const jsonStr = await window.__TAURI__.core.invoke('load_text_asset', { path: dlc.id + '/character.json' });
             if (jsonStr) {
-              GIF_MODES[dlc.id] = JSON.parse(jsonStr).states;
+              registerCharacter(dlc.id, jsonStr);
             }
           } catch(e) {}
         }
@@ -826,7 +851,7 @@ async function preloadAssets() {
           try {
             const jsonStr = await window.__TAURI__.core.invoke('load_text_asset', { path: pack.id + '/character.json' });
             if (jsonStr) {
-              GIF_MODES[pack.id] = JSON.parse(jsonStr).states;
+              registerCharacter(pack.id, jsonStr);
             }
           } catch(e) {}
         }
@@ -846,7 +871,7 @@ async function preloadAssets() {
       try { hasExternalAssets = !!(await window.__TAURI__.core.invoke('get_assets_dir')); } catch(e) {}
       const jsonStr = await window.__TAURI__.core.invoke('load_text_asset', { path: mode + '/character.json' });
       if (jsonStr) {
-        GIF_MODES[mode] = JSON.parse(jsonStr).states;
+        registerCharacter(mode, jsonStr);
       } else {
         throw new Error('character.json not found after download');
       }

@@ -215,6 +215,11 @@ html, body {
   animation: pop-in 0.4s ease-out forwards;
 }
 
+/* Motion off (Settings toggle or pack "motion": "none"): body class outranks the .anim-* rules above */
+body.no-motion #ferris-wrapper, body.no-motion #ascii-art {
+  animation: none;
+}
+
 /* ASCII art character */
 #ascii-art {
   font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
