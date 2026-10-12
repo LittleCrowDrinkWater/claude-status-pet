@@ -813,8 +813,11 @@ function sessionPriority(session) {
 
 function effectiveState(session, now) {
   const age = now - session.last_modified;
-  if (WORKING_STATES.has(session.state) && age > STALE_WORKING_MS) return 'idle';
-  if (session.state === 'waiting' && age > STALE_WAITING_MS) return 'idle';
+  // The age guesses only stand in for an unknown process. A live Claude process means a quiet
+  // session is really busy (a long build) or really waiting for approval, not crashed.
+  const guessByAge = session.alive !== true;
+  if (guessByAge && WORKING_STATES.has(session.state) && age > STALE_WORKING_MS) return 'idle';
+  if (guessByAge && session.state === 'waiting' && age > STALE_WAITING_MS) return 'idle';
   if (session.state === 'error' && age > ERROR_VISIBLE_MS) return 'idle';
   return session.state;
 }
@@ -837,7 +840,8 @@ async function refreshSessions() {
   let sessions = [];
   try { sessions = await window.__TAURI__.core.invoke('list_all_sessions'); } catch (e) { return; }
   aggregateSessions = sessions
-    .filter(s => s.state !== 'closed' && now - s.last_modified < HIDE_SESSION_AFTER_MS)
+    // alive === false: its Claude process exited without a SessionEnd hook (crash, terminal closed)
+    .filter(s => s.state !== 'closed' && s.alive !== false && now - s.last_modified < HIDE_SESSION_AFTER_MS)
     .map(s => ({ ...s, state: effectiveState(s, now) }))
     .sort((a, b) => sessionPriority(b) - sessionPriority(a) || b.last_modified - a.last_modified);
   if (pinnedSessionId && !aggregateSessions.some(s => s.session_id === pinnedSessionId)) pinnedSessionId = '';

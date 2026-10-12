@@ -106,6 +106,16 @@ struct SessionInfo {
     detail: String,
     status_file: String,
     last_modified: u64,
+    /// None when the status file has no Claude process recorded (older binary, other agents, non-Windows)
+    alive: Option<bool>,
+}
+
+fn read_claude_process_alive(path: &PathBuf) -> Option<bool> {
+    let content = fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let pid = u32::try_from(v["claude_pid"].as_u64()?).ok()?;
+    let started = v["claude_started"].as_u64()?;
+    Some(is_same_process_running(pid, started))
 }
 
 #[tauri::command]
@@ -293,6 +303,7 @@ fn collect_sessions(skip_locked: bool) -> Vec<SessionInfo> {
             } else {
                 (String::new(), "idle".to_string(), String::new())
             };
+            let alive = read_claude_process_alive(&status_path);
             sessions.push(SessionInfo {
                 session_id: sid,
                 session_name: sname,
@@ -300,6 +311,7 @@ fn collect_sessions(skip_locked: bool) -> Vec<SessionInfo> {
                 detail,
                 status_file: status_path.to_string_lossy().to_string(),
                 last_modified,
+                alive,
             });
         }
     }
@@ -660,10 +672,14 @@ fn cmd_write_status(args: &[String]) {
     if launch_only {
         debug_log(&log_path, "launch_only — skipping status write");
     } else {
+        // Lets the aggregate pet drop a session whose Claude process died without a SessionEnd hook
+        let claude_process = find_claude_ancestor();
         let status = serde_json::json!({
             "state": state, "detail": detail, "tool": tool,
             "event": event, "session_id": session_id,
-            "session_name": session_name, "timestamp": timestamp()
+            "session_name": session_name, "timestamp": timestamp(),
+            "claude_pid": claude_process.map(|(pid, _)| pid),
+            "claude_started": claude_process.map(|(_, started)| started)
         });
         let _ = fs::write(&status_file, status.to_string());
     }
@@ -736,6 +752,104 @@ unsafe extern "system" {
     fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
     fn CreateMutexW(attributes: *mut std::ffi::c_void, initial_owner: i32, name: *const u16) -> *mut std::ffi::c_void;
     fn GetLastError() -> u32;
+    fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> *mut std::ffi::c_void;
+    fn Process32FirstW(snapshot: *mut std::ffi::c_void, entry: *mut ProcessEntry32W) -> i32;
+    fn Process32NextW(snapshot: *mut std::ffi::c_void, entry: *mut ProcessEntry32W) -> i32;
+    fn GetProcessTimes(handle: *mut std::ffi::c_void, creation: *mut FileTime, exit: *mut FileTime,
+                       kernel: *mut FileTime, user: *mut FileTime) -> i32;
+}
+
+/// PROCESSENTRY32W from tlhelp32.h
+#[cfg(windows)]
+#[repr(C)]
+struct ProcessEntry32W {
+    size: u32,
+    usage: u32,
+    process_id: u32,
+    default_heap_id: usize,
+    module_id: u32,
+    threads: u32,
+    parent_process_id: u32,
+    priority_class_base: i32,
+    flags: u32,
+    exe_file: [u16; 260],
+}
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct FileTime {
+    low: u32,
+    high: u32,
+}
+
+/// Creation time of a running process, as a raw FILETIME value.
+#[cfg(windows)]
+fn process_start_time(pid: u32) -> Option<u64> {
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let mut times = [FileTime::default(); 4];
+        let [creation, exit, kernel, user] = &mut times;
+        let ok = GetProcessTimes(handle, creation, exit, kernel, user);
+        CloseHandle(handle);
+        (ok != 0).then(|| ((times[0].high as u64) << 32) | times[0].low as u64)
+    }
+}
+
+/// The Claude Code process that ran this hook, found by walking up the parent chain
+/// (claude.exe -> bash.exe -> write-status). Returns its PID and creation time.
+#[cfg(windows)]
+fn find_claude_ancestor() -> Option<(u32, u64)> {
+    const TH32CS_SNAPPROCESS: u32 = 0x2;
+    const MAX_DEPTH: usize = 8;
+    let mut processes: std::collections::HashMap<u32, (u32, String)> = std::collections::HashMap::new();
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot.is_null() || snapshot as isize == -1 {
+            return None;
+        }
+        let mut entry: ProcessEntry32W = std::mem::zeroed();
+        entry.size = std::mem::size_of::<ProcessEntry32W>() as u32;
+        let mut has_entry = Process32FirstW(snapshot, &mut entry) != 0;
+        while has_entry {
+            let name_len = entry.exe_file.iter().position(|&c| c == 0).unwrap_or(entry.exe_file.len());
+            let name = String::from_utf16_lossy(&entry.exe_file[..name_len]);
+            processes.insert(entry.process_id, (entry.parent_process_id, name));
+            has_entry = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
+    }
+    let mut pid = std::process::id();
+    for _ in 0..MAX_DEPTH {
+        let parent = processes.get(&pid)?.0;
+        if processes.get(&parent)?.1.eq_ignore_ascii_case("claude.exe") {
+            return process_start_time(parent).map(|started| (parent, started));
+        }
+        pid = parent;
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn find_claude_ancestor() -> Option<(u32, u64)> {
+    None
+}
+
+/// Whether the Claude process recorded in a status file is still the same running process.
+/// Windows reuses PIDs, so the creation time must match too, or a dead session could look
+/// alive through an unrelated process that took over its PID.
+#[cfg(windows)]
+fn is_same_process_running(pid: u32, started: u64) -> bool {
+    process_start_time(pid) == Some(started) && is_process_running(pid)
+}
+
+#[cfg(not(windows))]
+fn is_same_process_running(pid: u32, _started: u64) -> bool {
+    is_process_running(pid)
 }
 
 #[cfg(not(windows))]
