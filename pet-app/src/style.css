@@ -11,6 +11,13 @@ html, body {
   font-family: 'Fredoka', 'Quicksand', 'Segoe UI', sans-serif;
 }
 
+/* Invisible until app.js has moved the window into place, so it never shows at the config position.
+   Hiding the window itself instead breaks rendering: WebView2 never repaints a transparent window
+   that starts hidden. */
+body:not(.placed) {
+  opacity: 0;
+}
+
 #pet-container {
   display: flex;
   flex-direction: column;

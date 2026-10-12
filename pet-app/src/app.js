@@ -230,9 +230,63 @@ function applyConfig() {
     const h = Math.round(240 * petScale);
     const LS = window.__TAURI__.dpi?.LogicalSize || window.__TAURI__.window?.LogicalSize;
     if (LS) {
-      window.__TAURI__.window.getCurrentWindow().setSize(new LS(w, h));
+      // The window grows from its top-left corner, so a bigger scale can push it past the screen edge
+      window.__TAURI__.window.getCurrentWindow().setSize(new LS(w, h)).then(keepWindowOnScreen).catch(() => {});
     }
   }
+}
+
+// ── Window placement: bottom-right of the primary work area, or wherever the user last dropped it ──
+const WINDOW_MARGIN = 16;
+
+function isPointInArea(point, area) {
+  return point.x >= area.position.x && point.x < area.position.x + area.size.width
+      && point.y >= area.position.y && point.y < area.position.y + area.size.height;
+}
+
+async function keepWindowOnScreen() {
+  const win = window.__TAURI__.window.getCurrentWindow();
+  const monitor = await win.currentMonitor();
+  if (!monitor) return;
+  const area = monitor.workArea;
+  const position = await win.outerPosition();
+  const size = await win.outerSize();
+  const x = Math.max(area.position.x, Math.min(position.x, area.position.x + area.size.width - size.width));
+  const y = Math.max(area.position.y, Math.min(position.y, area.position.y + area.size.height - size.height));
+  if (x !== position.x || y !== position.y) {
+    await win.setPosition(new window.__TAURI__.dpi.PhysicalPosition(x, y));
+  }
+}
+
+async function moveToDefaultCorner() {
+  const win = window.__TAURI__.window.getCurrentWindow();
+  const monitor = (await window.__TAURI__.window.primaryMonitor()) || (await win.currentMonitor());
+  const area = monitor.workArea;
+  // Size from the scale setting, not outerSize(): applyConfig's resize may still be in flight
+  const width = Math.round(200 * petScale * monitor.scaleFactor);
+  const height = Math.round(240 * petScale * monitor.scaleFactor);
+  const margin = Math.round(WINDOW_MARGIN * monitor.scaleFactor);
+  await win.setPosition(new window.__TAURI__.dpi.PhysicalPosition(
+    area.position.x + area.size.width - width - margin,
+    area.position.y + area.size.height - height - margin));
+}
+
+async function placeWindow() {
+  const win = window.__TAURI__.window.getCurrentWindow();
+  const { PhysicalPosition } = window.__TAURI__.dpi;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('petPosition') || 'null'); } catch (e) {}
+  const monitors = await window.__TAURI__.window.availableMonitors();
+  if (saved && monitors.some(m => isPointInArea(saved, m.workArea))) {
+    await win.setPosition(new PhysicalPosition(saved.x, saved.y));
+  } else {
+    await moveToDefaultCorner();
+  }
+  let saveTimer = null;
+  win.onMoved(({ payload }) => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => localStorage.setItem('petPosition', JSON.stringify({ x: payload.x, y: payload.y })), 300);
+  });
 }
 
 function saveConfig(key, value) {
@@ -540,6 +594,10 @@ function buildConfigPage() {
     saveConfig('petMotion', petMotion ? 'on' : 'off');
     buildMenu();
   });
+  addMenuItem(charMenu, 'Reset Position', () => {
+    closeMenu();
+    if (window.__TAURI__) moveToDefaultCorner().catch(() => {});
+  });
   addDivider(charMenu);
   addMenuItem(charMenu, 'Update Assets', async () => {
     closeMenu();
@@ -837,6 +895,10 @@ async function startAggregateMode() {
 
 // ── Listen for status updates ──
 if (window.__TAURI__) {
+  const revealPet = () => document.body.classList.add('placed');
+  placeWindow().finally(revealPet);
+  // Never leave the pet invisible if placement hangs on a monitor query
+  setTimeout(revealPet, 3000);
   // Another topmost window (task manager, a player's mini window) can cover the pet; re-assert periodically
   setInterval(() => { window.__TAURI__.window.getCurrentWindow().setAlwaysOnTop(true).catch(() => {}); }, 2000);
   window.__TAURI__.core.invoke('is_aggregate_mode').then((isAggregate) => {
@@ -856,6 +918,7 @@ if (window.__TAURI__) {
     window.__TAURI__.core.invoke('get_status').then((s) => { if (s) updateStatus(s); });
   });
 } else {
+  document.body.classList.add('placed');
   const demos = [
     { state: 'idle', detail: 'Waiting...' },
     { state: 'thinking', detail: 'Processing prompt...' },
