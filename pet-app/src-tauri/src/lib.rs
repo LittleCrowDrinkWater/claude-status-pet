@@ -127,34 +127,141 @@ fn is_aggregate_mode(mode: tauri::State<'_, AggregateMode>) -> bool {
     mode.0
 }
 
-/// Pings the frontend whenever any status-*.json changes; the frontend then re-reads
-/// the whole list via list_all_sessions, so the payload carries no data.
-fn spawn_sessions_watcher(handle: tauri::AppHandle) {
+fn is_status_file_name(name: &str) -> bool {
+    name.starts_with("status-") && name.ends_with(".json")
+}
+
+/// Watches `dir` (non-recursive) on a background thread and passes every event to `on_event`.
+fn spawn_dir_watcher(dir: PathBuf, log_path: PathBuf, mut on_event: impl FnMut(notify::Event) + Send + 'static) {
     std::thread::spawn(move || {
-        let pet_dir = default_pet_dir();
         let (tx, rx) = std::sync::mpsc::channel();
         let mut watcher = match notify::recommended_watcher(tx) {
             Ok(w) => w,
             Err(e) => {
-                debug_log(&pet_dir, &format!("FATAL: aggregate watcher init failed: {}", e));
+                debug_log(&log_path, &format!("FATAL: watcher init failed: {}", e));
                 return;
             }
         };
-        if let Err(e) = watcher.watch(&pet_dir, RecursiveMode::NonRecursive) {
-            debug_log(&pet_dir, &format!("FATAL: aggregate watch() failed: {}", e));
+        let _ = fs::create_dir_all(&dir);
+        if let Err(e) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
+            debug_log(&log_path, &format!("FATAL: watch() failed: {}", e));
             return;
         }
-        for event in rx.into_iter().flatten() {
-            let touches_status = event.paths.iter().any(|p| {
-                p.file_name()
-                    .map(|n| n.to_string_lossy())
-                    .is_some_and(|n| n.starts_with("status-") && n.ends_with(".json"))
-            });
-            if touches_status {
-                let _ = handle.emit("sessions-changed", ());
+        debug_log(&log_path, &format!("Watcher started on {:?}", dir));
+        for event in rx {
+            match event {
+                Ok(event) => on_event(event),
+                Err(e) => debug_log(&log_path, &format!("Watcher error: {:?}", e)),
             }
         }
+        debug_log(&log_path, "Watcher loop ended (channel closed)");
     });
+}
+
+/// Single-session mode: emits status-update whenever this session's status file changes,
+/// and a synthetic "closed" status once the file is really deleted.
+fn spawn_status_file_watcher(status_file: PathBuf, handle: tauri::AppHandle) {
+    let Some(dir) = status_file.parent().map(|p| p.to_path_buf()) else {
+        debug_log(&status_file, "FATAL: status path has no parent dir");
+        return;
+    };
+    if let Some(status) = read_status(&status_file) {
+        debug_log(&status_file, &format!("Initial status: state={}", status.state));
+        let _ = handle.emit("status-update", status);
+    }
+    let log_path = status_file.clone();
+    spawn_dir_watcher(dir, log_path.clone(), move |event| {
+        if !event.paths.iter().any(|p| *p == status_file) {
+            return;
+        }
+        debug_log(&log_path, &format!("Event: {:?}, paths: {:?}", event.kind, event.paths));
+        match event.kind {
+            EventKind::Modify(_) | EventKind::Create(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                if let Some(status) = read_status(&status_file) {
+                    debug_log(&log_path, &format!("Emit: state={}, detail={}", status.state, status.detail));
+                    let _ = handle.emit("status-update", status);
+                } else {
+                    debug_log(&log_path, "Read failed after Modify/Create (file may be mid-write)");
+                }
+            }
+            EventKind::Remove(_) => {
+                // Windows writeFileSync reports Remove for an in-place rewrite; confirm before closing
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                if status_file.exists() {
+                    if let Some(status) = read_status(&status_file) {
+                        debug_log(&log_path, &format!("Emit after spurious Remove: state={}", status.state));
+                        let _ = handle.emit("status-update", status);
+                    }
+                } else {
+                    debug_log(&log_path, "File truly deleted, emitting closed state");
+                    let _ = handle.emit("status-update", StatusPayload {
+                        state: "closed".to_string(),
+                        detail: "Session ended".to_string(),
+                        tool: String::new(),
+                        event: "SessionEnd".to_string(),
+                        session_id: String::new(),
+                        session_name: String::new(),
+                    });
+                }
+            }
+            _ => debug_log(&log_path, &format!("Ignored event: {:?}", event.kind)),
+        }
+    });
+}
+
+/// Aggregate mode: pings the frontend whenever any status-*.json changes; the frontend then
+/// re-reads the whole list via list_all_sessions, so the payload carries no data.
+fn spawn_sessions_watcher(handle: tauri::AppHandle) {
+    let pet_dir = default_pet_dir();
+    spawn_dir_watcher(pet_dir.clone(), pet_dir, move |event| {
+        let touches_status = event.paths.iter().any(|p| {
+            p.file_name().is_some_and(|n| is_status_file_name(&n.to_string_lossy()))
+        });
+        if touches_status {
+            let _ = handle.emit("sessions-changed", ());
+        }
+    });
+}
+
+/// Single-instance guard for the aggregate pet. Several SessionStart hooks can launch it at the
+/// same moment, so a check-then-write lock file would let two through. Returns the lock file to
+/// delete on exit (None when the OS releases the guard itself), or Err if a pet already runs.
+#[cfg(windows)]
+fn acquire_aggregate_guard() -> Result<Option<PathBuf>, ()> {
+    const ERROR_ALREADY_EXISTS: u32 = 183;
+    let name: Vec<u16> = "Local\\claude-status-pet-aggregate\0".encode_utf16().collect();
+    unsafe {
+        let handle = CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr());
+        if handle.is_null() {
+            return Ok(None);
+        }
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            CloseHandle(handle);
+            return Err(());
+        }
+    }
+    // The handle is intentionally never closed: Windows releases the mutex when the process
+    // exits, crashes included, so no stale lock can block the next launch.
+    Ok(None)
+}
+
+#[cfg(not(windows))]
+fn acquire_aggregate_guard() -> Result<Option<PathBuf>, ()> {
+    let lock_file = default_pet_dir().join("pet-all.lock");
+    for _ in 0..2 {
+        match fs::OpenOptions::new().write(true).create_new(true).open(&lock_file) {
+            Ok(mut file) => {
+                let _ = write!(file, "{}", std::process::id());
+                return Ok(Some(lock_file));
+            }
+            Err(_) if is_lock_alive(&lock_file) => return Err(()),
+            Err(_) => {
+                let _ = fs::remove_file(&lock_file);
+            }
+        }
+    }
+    Err(())
 }
 
 fn collect_sessions(skip_locked: bool) -> Vec<SessionInfo> {
@@ -164,7 +271,7 @@ fn collect_sessions(skip_locked: bool) -> Vec<SessionInfo> {
     for entry in entries.filter_map(|e| e.ok()) {
         let name = entry.file_name();
         let name_str = name.to_string_lossy().to_string();
-        if name_str.starts_with("status-") && name_str.ends_with(".json") {
+        if is_status_file_name(&name_str) {
             let sid = name_str.strip_prefix("status-").unwrap().strip_suffix(".json").unwrap().to_string();
             if skip_locked {
                 let lock_file = pet_dir.join(format!("pet-{}.lock", sid));
@@ -224,70 +331,7 @@ fn bind_session(
     *session_id_state.lock().unwrap() = session_id.clone();
     *lock_path_state.lock().unwrap() = Some(lock_file);
 
-    // Emit initial status
-    if let Some(status) = read_status(&status_file) {
-        let _ = app.emit("status-update", status);
-    }
-
-    // Start file watcher in a background thread
-    let watch_path = status_file.clone();
-    let log_path = status_file.clone();
-    let handle = app.clone();
-    std::thread::spawn(move || {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut watcher = match notify::recommended_watcher(tx) {
-            Ok(w) => w,
-            Err(e) => {
-                debug_log(&log_path, &format!("FATAL: watcher init failed: {}", e));
-                return;
-            }
-        };
-        let watch_dir = match watch_path.parent() {
-            Some(p) => p.to_path_buf(),
-            None => return,
-        };
-        let _ = fs::create_dir_all(&watch_dir);
-        if let Err(e) = watcher.watch(&watch_dir, RecursiveMode::NonRecursive) {
-            debug_log(&log_path, &format!("FATAL: watch() failed: {}", e));
-            return;
-        }
-        debug_log(&log_path, &format!("Watcher started on {:?} (bind_session)", watch_dir));
-
-        for event in rx {
-            if let Ok(event) = event {
-                let is_our_file = event.paths.iter().any(|p| *p == watch_path);
-                if !is_our_file { continue; }
-                debug_log(&log_path, &format!("bind_session event: {:?}, paths: {:?}", event.kind, event.paths));
-                match event.kind {
-                    EventKind::Modify(_) | EventKind::Create(_) => {
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                        if let Some(status) = read_status(&watch_path) {
-                            debug_log(&log_path, &format!("bind_session emit: state={}, detail={}", status.state, status.detail));
-                            let _ = handle.emit("status-update", status);
-                        }
-                    }
-                    EventKind::Remove(_) => {
-                        std::thread::sleep(std::time::Duration::from_millis(300));
-                        if watch_path.exists() {
-                            if let Some(status) = read_status(&watch_path) {
-                                let _ = handle.emit("status-update", status);
-                            }
-                        } else {
-                            let _ = handle.emit("status-update", StatusPayload {
-                                state: "closed".to_string(),
-                                detail: "Session ended".to_string(),
-                                tool: String::new(),
-                                event: "SessionEnd".to_string(),
-                                session_id: String::new(),
-                                session_name: String::new(),
-                            });
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    });
+    spawn_status_file_watcher(status_file, app);
 
     Ok(())
 }
@@ -637,7 +681,7 @@ fn cleanup_stale_status(pet_dir: &PathBuf) {
     for entry in entries.filter_map(|e| e.ok()) {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if name_str.starts_with("status-") && name_str.ends_with(".json") {
+        if is_status_file_name(&name_str) {
             if let Ok(meta) = entry.metadata() {
                 if let Ok(modified) = meta.modified() {
                     if modified < cutoff {
@@ -690,6 +734,8 @@ unsafe extern "system" {
     fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
     fn GetExitCodeProcess(handle: *mut std::ffi::c_void, exit_code: *mut u32) -> i32;
     fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    fn CreateMutexW(attributes: *mut std::ffi::c_void, initial_owner: i32, name: *const u16) -> *mut std::ffi::c_void;
+    fn GetLastError() -> u32;
 }
 
 #[cfg(not(windows))]
@@ -906,16 +952,14 @@ pub fn run() {
         write_lock_file(&lock_file);
         (sf.clone(), sid, Some(lock_file))
     } else if aggregate_mode {
-        // One aggregate pet for all sessions; a SessionStart hook may launch it many times.
-        let pet_dir = default_pet_dir();
-        let _ = fs::create_dir_all(&pet_dir);
-        let lock_file = pet_dir.join("pet-all.lock");
-        if is_lock_alive(&lock_file) {
-            eprintln!("Aggregate pet already running");
-            std::process::exit(0);
+        let _ = fs::create_dir_all(default_pet_dir());
+        match acquire_aggregate_guard() {
+            Ok(lock_file) => (default_status_path(), String::new(), lock_file),
+            Err(()) => {
+                eprintln!("Aggregate pet already running");
+                std::process::exit(0);
+            }
         }
-        write_lock_file(&lock_file);
-        (default_status_path(), String::new(), Some(lock_file))
     } else {
         // No explicit session — will show session picker in frontend
         (default_status_path(), String::new(), None)
@@ -1010,89 +1054,7 @@ pub fn run() {
                 });
             } else {
                 // Explicit session mode: watch status file directly
-                let watch_path = initial_status_path.clone();
-                let log_path = initial_status_path.clone();
-                std::thread::spawn(move || {
-                let (tx, rx) = std::sync::mpsc::channel();
-                let mut watcher = match notify::recommended_watcher(tx) {
-                    Ok(w) => w,
-                    Err(e) => {
-                        debug_log(&log_path, &format!("FATAL: watcher init failed: {}", e));
-                        return;
-                    }
-                };
-
-                let watch_dir = match watch_path.parent() {
-                    Some(p) => p.to_path_buf(),
-                    None => {
-                        debug_log(&log_path, "FATAL: status path has no parent dir");
-                        return;
-                    }
-                };
-                let _ = fs::create_dir_all(&watch_dir);
-                if let Err(e) = watcher.watch(&watch_dir, RecursiveMode::NonRecursive) {
-                    debug_log(&log_path, &format!("FATAL: watch() failed: {}", e));
-                    return;
-                }
-
-                debug_log(&log_path, &format!("Watcher started on {:?}", watch_dir));
-
-                if let Some(status) = read_status(&watch_path) {
-                    debug_log(&log_path, &format!("Initial status: state={}", status.state));
-                    let _ = handle.emit("status-update", status);
-                }
-
-                for event in rx {
-                    if let Ok(event) = event {
-                        let is_our_file = event.paths.iter().any(|p| *p == watch_path);
-                        if !is_our_file {
-                            continue;
-                        }
-                        debug_log(&log_path, &format!("Event: {:?}, paths: {:?}", event.kind, event.paths));
-                        match event.kind {
-                            EventKind::Modify(_) | EventKind::Create(_) => {
-                                std::thread::sleep(std::time::Duration::from_millis(50));
-                                if let Some(status) = read_status(&watch_path) {
-                                    debug_log(&log_path, &format!("Emit: state={}, detail={}", status.state, status.detail));
-                                    let _ = handle.emit("status-update", status);
-                                } else {
-                                    debug_log(&log_path, "Read failed after Modify/Create (file may be mid-write)");
-                                }
-                            }
-                            EventKind::Remove(_) => {
-                                debug_log(&log_path, "Remove detected, waiting 300ms to confirm deletion...");
-                                std::thread::sleep(std::time::Duration::from_millis(300));
-                                if watch_path.exists() {
-                                    debug_log(&log_path, "File still exists after Remove — spurious event (Windows writeFileSync), reading status");
-                                    if let Some(status) = read_status(&watch_path) {
-                                        debug_log(&log_path, &format!("Emit after spurious Remove: state={}, detail={}", status.state, status.detail));
-                                        let _ = handle.emit("status-update", status);
-                                    }
-                                } else {
-                                    debug_log(&log_path, "File truly deleted — emitting closed state");
-                                    let _ = handle.emit(
-                                        "status-update",
-                                        StatusPayload {
-                                            state: "closed".to_string(),
-                                            detail: "Session ended".to_string(),
-                                            tool: String::new(),
-                                            event: "SessionEnd".to_string(),
-                                            session_id: String::new(),
-                                            session_name: String::new(),
-                                        },
-                                    );
-                                }
-                            }
-                            _ => {
-                                debug_log(&log_path, &format!("Ignored event: {:?}", event.kind));
-                            }
-                        }
-                    } else if let Err(e) = event {
-                        debug_log(&log_path, &format!("Watcher error: {:?}", e));
-                    }
-                }
-                debug_log(&log_path, "Watcher loop ended (channel closed)");
-                });
+                spawn_status_file_watcher(initial_status_path.clone(), handle);
             }
 
             Ok(())

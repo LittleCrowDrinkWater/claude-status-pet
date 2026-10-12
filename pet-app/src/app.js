@@ -146,6 +146,18 @@ function registerCharacter(id, jsonStr) {
   else STATIC_MOTION_PACKS.delete(id);
 }
 
+// Reads <id>/character.json from the DLC or custom characters dir; false when missing or unreadable
+async function loadCharacter(id) {
+  try {
+    const jsonStr = await window.__TAURI__.core.invoke('load_text_asset', { path: id + '/character.json' });
+    if (!jsonStr) return false;
+    registerCharacter(id, jsonStr);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 // Ferris SVG map loaded from character.json (populated at init, fallback to hardcoded)
 let FERRIS_SVG_MAP = {
   idle: ['ferris/1.svg'], thinking: ['ferris/3.svg', 'ferris/14.svg'],
@@ -224,8 +236,10 @@ function applyConfig() {
 
   applyMotion();
 
-  // Resize window to match
-  if (window.__TAURI__) {
+  // Resize window to match. applyConfig also runs on every color-picker input, so skip the
+  // window round-trips unless the scale actually changed.
+  if (window.__TAURI__ && petScale !== appliedWindowScale) {
+    appliedWindowScale = petScale;
     const w = Math.round(200 * petScale);
     const h = Math.round(240 * petScale);
     const LS = window.__TAURI__.dpi?.LogicalSize || window.__TAURI__.window?.LogicalSize;
@@ -235,6 +249,9 @@ function applyConfig() {
     }
   }
 }
+
+// tauri.conf.json creates the window at the 1x size (200x240)
+let appliedWindowScale = 1;
 
 // ── Window placement: bottom-right of the primary work area, or wherever the user last dropped it ──
 const WINDOW_MARGIN = 16;
@@ -273,20 +290,22 @@ async function moveToDefaultCorner() {
 
 async function placeWindow() {
   const win = window.__TAURI__.window.getCurrentWindow();
-  const { PhysicalPosition } = window.__TAURI__.dpi;
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem('petPosition') || 'null'); } catch (e) {}
-  const monitors = await window.__TAURI__.window.availableMonitors();
-  if (saved && monitors.some(m => isPointInArea(saved, m.workArea))) {
-    await win.setPosition(new PhysicalPosition(saved.x, saved.y));
-  } else {
-    await moveToDefaultCorner();
-  }
+  // Register first so drags are still remembered if a monitor query below fails
   let saveTimer = null;
   win.onMoved(({ payload }) => {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => localStorage.setItem('petPosition', JSON.stringify({ x: payload.x, y: payload.y })), 300);
   });
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('petPosition') || 'null'); } catch (e) {}
+  const monitors = await window.__TAURI__.window.availableMonitors();
+  if (saved && monitors.some(m => isPointInArea(saved, m.workArea))) {
+    await win.setPosition(new window.__TAURI__.dpi.PhysicalPosition(saved.x, saved.y));
+    // Only the top-left corner was checked; after a resolution change the rest may hang off screen
+    await keepWindowOnScreen();
+  } else {
+    await moveToDefaultCorner();
+  }
 }
 
 function saveConfig(key, value) {
@@ -677,13 +696,7 @@ async function downloadAndSelectDlc(dlcName) {
     dlcInstalledCache[dlcName] = true;
     // Re-check assets dir (download_dlc may have created it)
     try { hasExternalAssets = !!(await window.__TAURI__.core.invoke('get_assets_dir')); } catch(e) {}
-    // Load character.json for the newly downloaded DLC
-    try {
-      const jsonStr = await window.__TAURI__.core.invoke('load_text_asset', { path: dlcName + '/character.json' });
-      if (jsonStr) {
-        registerCharacter(dlcName, jsonStr);
-      }
-    } catch(e) {}
+    await loadCharacter(dlcName);
     await selectChar(dlcName);
   } catch (e) {
     statusText.textContent = 'Download failed: ' + (e || 'unknown error');
@@ -779,6 +792,8 @@ const STATE_PRIORITY = { waiting: 5, error: 4, reading: 3, editing: 3, searching
 const WORKING_STATES = new Set(['thinking', 'reading', 'editing', 'searching', 'running', 'delegating']);
 // A crashed session never sends Stop, so a working state this old is treated as idle
 const STALE_WORKING_MS = 10 * 60 * 1000;
+// Closing the terminal at a permission prompt leaves "waiting" behind with the top priority
+const STALE_WAITING_MS = 30 * 60 * 1000;
 const ERROR_VISIBLE_MS = 2 * 60 * 1000;
 const HIDE_SESSION_AFTER_MS = 6 * 60 * 60 * 1000;
 // Hold the shown session this long so several busy sessions don't make the pet flicker
@@ -799,6 +814,7 @@ function sessionPriority(session) {
 function effectiveState(session, now) {
   const age = now - session.last_modified;
   if (WORKING_STATES.has(session.state) && age > STALE_WORKING_MS) return 'idle';
+  if (session.state === 'waiting' && age > STALE_WAITING_MS) return 'idle';
   if (session.state === 'error' && age > ERROR_VISIBLE_MS) return 'idle';
   return session.state;
 }
@@ -858,6 +874,12 @@ function applyAggregateStatus(status) {
   if (key === lastAggregateKey) return;
   lastAggregateKey = key;
   updateStatus(status);
+  // updateStatus leaves the bubble alone when detail is empty, which would keep showing the
+  // previously displayed session's text under this session's label
+  if (!status.detail && status.state !== 'offline') {
+    clearTimeout(bubbleTimeout);
+    bubble.classList.add('hidden');
+  }
 }
 
 function buildSessionsPage() {
@@ -899,8 +921,12 @@ if (window.__TAURI__) {
   placeWindow().finally(revealPet);
   // Never leave the pet invisible if placement hangs on a monitor query
   setTimeout(revealPet, 3000);
-  // Another topmost window (task manager, a player's mini window) can cover the pet; re-assert periodically
-  setInterval(() => { window.__TAURI__.window.getCurrentWindow().setAlwaysOnTop(true).catch(() => {}); }, 2000);
+  // Another topmost window (task manager, a player's mini window) can cover the pet. Re-assert when
+  // the pet loses focus, plus a slow fallback poll: a fast poll would fight other windows that also
+  // keep re-asserting topmost, making both flicker.
+  const reassertTopmost = () => window.__TAURI__.window.getCurrentWindow().setAlwaysOnTop(true).catch(() => {});
+  window.addEventListener('blur', reassertTopmost);
+  setInterval(reassertTopmost, 10000);
   window.__TAURI__.core.invoke('is_aggregate_mode').then((isAggregate) => {
     if (isAggregate) {
       startAggregateMode();
@@ -1029,14 +1055,7 @@ async function preloadAssets() {
       availableDlcs = await window.__TAURI__.core.invoke('list_available_dlcs');
       for (const dlc of availableDlcs) {
         dlcInstalledCache[dlc.id] = dlc.installed;
-        if (dlc.installed) {
-          try {
-            const jsonStr = await window.__TAURI__.core.invoke('load_text_asset', { path: dlc.id + '/character.json' });
-            if (jsonStr) {
-              registerCharacter(dlc.id, jsonStr);
-            }
-          } catch(e) {}
-        }
+        if (dlc.installed) await loadCharacter(dlc.id);
       }
     } catch(e) {}
 
@@ -1045,14 +1064,7 @@ async function preloadAssets() {
       try {
         const packs = await window.__TAURI__.core.invoke('list_character_packs');
         customPacks = packs.filter(p => p.group === 'custom' && p.installed);
-        for (const pack of customPacks) {
-          try {
-            const jsonStr = await window.__TAURI__.core.invoke('load_text_asset', { path: pack.id + '/character.json' });
-            if (jsonStr) {
-              registerCharacter(pack.id, jsonStr);
-            }
-          } catch(e) {}
-        }
+        for (const pack of customPacks) await loadCharacter(pack.id);
       } catch(e) {}
     }
   }
@@ -1067,10 +1079,7 @@ async function preloadAssets() {
       dlcInstalledCache[mode] = true;
       // Re-check assets dir (download_dlc may have created it)
       try { hasExternalAssets = !!(await window.__TAURI__.core.invoke('get_assets_dir')); } catch(e) {}
-      const jsonStr = await window.__TAURI__.core.invoke('load_text_asset', { path: mode + '/character.json' });
-      if (jsonStr) {
-        registerCharacter(mode, jsonStr);
-      } else {
+      if (!(await loadCharacter(mode))) {
         throw new Error('character.json not found after download');
       }
     } catch(e) {
