@@ -671,6 +671,10 @@ fn cmd_write_status(args: &[String]) {
     // launch_only: don't write status (e.g. Copilot sessionStart — GUI launch handled by hook script)
     if launch_only {
         debug_log(&log_path, "launch_only — skipping status write");
+    } else if event == "subagent_done" && !is_still_delegating(&status_file) {
+        // A background sub-agent can finish after the main turn already ended (Stop wrote idle)
+        // or moved on to other tools; switching to thinking then would stick with nothing running.
+        debug_log(&log_path, "subagent_done while not delegating — keeping current state");
     } else {
         // Lets the aggregate pet drop a session whose Claude process died without a SessionEnd hook
         let claude_process = find_claude_ancestor();
@@ -689,6 +693,10 @@ fn cmd_write_status(args: &[String]) {
 
     debug_log(&log_path, &format!("file written in {:?}", t0.elapsed()));
     debug_log(&log_path, &format!("write-status DONE in {:?}", t0.elapsed()));
+}
+
+fn is_still_delegating(status_file: &PathBuf) -> bool {
+    read_status(status_file).is_some_and(|status| status.state == "delegating")
 }
 
 fn cleanup_stale_status(pet_dir: &PathBuf) {

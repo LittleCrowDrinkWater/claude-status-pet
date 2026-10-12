@@ -122,6 +122,14 @@ mod tests {
     }
 
     #[test]
+    fn test_claude_subagent_stop_is_conditional_thinking() {
+        let stdin = make_stdin(Some("SubagentStop"), None, None, Some("s1"), Some("/proj"));
+        let ev = adapter::claude::ClaudeAdapter.parse(&stdin).unwrap();
+        assert_eq!(ev.event, "subagent_done");
+        assert_eq!(crate::status_map::event_to_state(&ev.event), "thinking");
+    }
+
+    #[test]
     fn test_claude_session_end() {
         let stdin = make_stdin(Some("SessionEnd"), None, None, Some("s1"), Some("/proj"));
         let ev = adapter::claude::ClaudeAdapter.parse(&stdin).unwrap();

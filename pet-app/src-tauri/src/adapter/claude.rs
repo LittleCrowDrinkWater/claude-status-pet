@@ -60,7 +60,8 @@ impl Adapter for ClaudeAdapter {
                 ("subagent".into(), "agent".into(), "Spawning sub-agent...".into())
             }
             "SubagentStop" => {
-                ("prompt".into(), String::new(), "Sub-agent finished".into())
+                // Not "prompt": write-status only resumes thinking if the session is still delegating
+                ("subagent_done".into(), String::new(), "Sub-agent finished".into())
             }
             "Notification" => {
                 ("wait".into(), String::new(), "Waiting for approval...".into())
