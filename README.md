@@ -44,25 +44,23 @@
 
    必须用 `npx tauri build`，直接 `cargo build` 不会把前端打包进 exe。
 
-3. **放到插件约定的位置**：把 `pet-app/src-tauri/target/release/claude-status-pet.exe` 复制成下面两个文件（钩子用无后缀的那个，启动用 `.exe` 那个）：
-
-   ```
-   %USERPROFILE%\.claude\pet-data\bin\claude-status-pet-windows-x64.exe
-   %USERPROFILE%\.claude\pet-data\bin\claude-status-pet
-   ```
-
-4. **加自动启动钩子**：在 Claude Code 用户配置 `settings.json` 的 `hooks.SessionStart` 里加一条：
+3. **加自动部署和启动的钩子**：在 Claude Code 用户配置 `settings.json` 的 `hooks.SessionStart` 里加一条，路径换成本仓库的实际位置：
 
    ```json
    {
      "type": "command",
-     "command": "powershell -NoProfile -Command 'Start-Process -FilePath \"$env:USERPROFILE\\.claude\\pet-data\\bin\\claude-status-pet-windows-x64.exe\" -ArgumentList \"run\",\"--all\" -WindowStyle Hidden'",
+     "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"D:/Code/Rust Code/claude-status-pet/scripts/start-pet.ps1\"",
      "async": true,
      "timeout": 15
    }
    ```
 
-   重复启动无害：已有一只在运行时，新进程发现全局锁 `pet-all.lock` 后直接退出。
+   每次开会话时 `scripts/start-pet.ps1` 会：
+   - 比较编译产物和正在使用的程序，不一样才停掉宠物、复制过去。复制成插件约定的两个文件：`%USERPROFILE%\.claude\pet-data\bin\` 下的 `claude-status-pet-windows-x64.exe`（宠物窗口用）和无后缀的 `claude-status-pet`（钩子写状态用）。
+   - 编译产物 15 秒内刚写过时先不复制，避免拿到编译到一半的文件。
+   - 启动汇总宠物。已有一只在运行时，新进程发现全局锁 `pet-all.lock` 后直接退出，所以重复启动无害。
+
+   宠物从复制出去的那份运行，编译目录里的 exe 不被占用，可以随时重新编译。改完代码后编译一次，下次开会话就自动换上新版本。
 
 **不要执行 `/pet update`**，它会下载上游的原版程序覆盖本版本；也不要再用 `/pet on`，它会额外开一只只跟单个会话的宠物。
 
