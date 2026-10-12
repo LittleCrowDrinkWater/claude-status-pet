@@ -1,172 +1,97 @@
-# Claude Status Pet
+# Claude Status Pet（个人改版）
 
-[English](README.md) | [中文](README.zh-CN.md)
+桌面宠物，实时显示 Claude Code 正在做什么：读文件、改代码、跑命令、等你审批……
 
-[![Build and Release](https://img.shields.io/github/actions/workflow/status/moeyui1/claude-status-pet/release.yml?style=flat-square&logo=github&label=build)](https://github.com/moeyui1/claude-status-pet/actions/workflows/release.yml)
-[![Latest Release](https://img.shields.io/github/v/release/moeyui1/claude-status-pet?style=flat-square&logo=github&color=blue)](https://github.com/moeyui1/claude-status-pet/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/moeyui1/claude-status-pet/latest/total?style=flat-square&logo=github&label=downloads)](https://github.com/moeyui1/claude-status-pet/releases/latest)
-[![License](https://img.shields.io/github/license/moeyui1/claude-status-pet?style=flat-square&color=green)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square&logo=tauri)](https://github.com/moeyui1/claude-status-pet/releases)
-[![Made with Rust](https://img.shields.io/badge/made%20with-Rust-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+本仓库 fork 自 [moeyui1/claude-status-pet](https://github.com/moeyui1/claude-status-pet) v1.1.13，之后按个人需求改造，**不再跟随上游更新**。上游的安装、更新方式（`/pet on`、`/pet update`、下载 Release）不适用于本版本，以本文为准。
 
-A desktop pet that shows what your AI coding assistant is doing — in real time. 🦀
+## 和上游的区别
 
-<table>
-<tr>
-<td align="center">
-<img src="docs/images/showcase-ferris.gif" width="100%" alt="Ferris demo">
-</td>
-<td align="center">
-<img src="docs/images/showcase-mona.gif" width="100%" alt="Mona demo">
-</td>
-<td align="center">
-<img src="docs/images/showcase-gopher.gif" width="100%" alt="Gopher demo">
-</td>
-<td align="center">
-<img src="docs/images/showcase-ascii.gif" width="100%" alt="ASCII demo">
-</td>
-</tr>
-</table>
+| 功能 | 上游 | 本版本 |
+|---|---|---|
+| 多会话 | 每个会话各开一只宠物，窗口重叠在同一位置 | **一只宠物汇总所有会话**，按紧急程度显示 |
+| 启动 | 每个会话手动执行 `/pet on` | 开新会话时由钩子自动启动，全局只会有一只 |
+| 状态动作 | 程序给每个状态加晃动、抖动 | 可以关掉；角色包可自带逐帧动画并声明不要程序晃动 |
+| 置顶 | 只在启动时设一次 | 每 2 秒重新确认，被其他置顶窗口盖住也会浮回来 |
 
-<details>
-<summary>📸 More screenshots</summary>
-<br>
-<table>
-<tr>
-<td align="center">
-<img src="https://github.com/user-attachments/assets/f8174efa-99a5-4891-93db-5b269d7965ed" width="100%" alt="Ferris in action">
-</td>
-</tr>
-</table>
-</details>
+### 汇总模式（`run --all`）
 
-## Quick Start
+- 几个会话同时活动时，按优先级挑一个显示：**等你审批 > 2 分钟内出错 > 干活中 > 思考中 > 空闲**。同一优先级显示最近有动静的那个。
+- 标签显示会话所在目录名，同名时加会话 ID 前 4 位；其余在忙的会话数显示为「+N」。
+- 右键 → Sessions：列出全部会话的状态和更新时间；点某个会话可以固定显示它，点 Auto 恢复自动挑选。
+- 会话失效的判断：「干活中」超过 10 分钟没更新按空闲处理（会话崩溃时收不到结束事件）；超过 6 小时没更新的会话不显示；没有会话时显示 offline。
 
-**Claude Code** — Plugin install:
+### 关闭晃动
 
-```
-/plugin marketplace add moeyui1/claude-status-pet
-/plugin install claude-status-pet
-```
+- 右键 → Settings → Motion：对所有角色生效。
+- 角色包的 `character.json` 写 `"motion": "none"`：只对这个角色关闭，适合本身就是逐帧动画（APNG、GIF）的角色。
 
-**GitHub Copilot CLI** — Run inside a Copilot CLI session:
+## 安装（Windows）
 
-```
-/plugin marketplace add moeyui1/claude-status-pet
-/plugin install claude-status-pet-copilot@claude-status-pet-copilot
-```
+1. **装插件**（提供写状态的钩子）：
 
-**VS Code Copilot** — Plugin install:
+   ```
+   /plugin marketplace add LittleCrowDrinkWater/claude-status-pet
+   /plugin install claude-status-pet
+   ```
 
-Open Command Palette → `Chat: Install Plugin From Source` → enter `https://github.com/moeyui1/claude-status-pet`
+2. **编译程序**：需要 Rust 1.88 以上、Node.js、VS Build Tools（MSVC）。
 
-Then run `/pet update` to download the binary and assets.
+   ```bash
+   cd pet-app
+   npm install
+   npx tauri build --no-bundle
+   ```
 
-**Or ask your AI agent** (any of the above):
+   必须用 `npx tauri build`，直接 `cargo build` 不会把前端打包进 exe。
 
-> Read https://raw.githubusercontent.com/moeyui1/claude-status-pet/main/docs/INSTALL.md and install it for me
+3. **放到插件约定的位置**：把 `pet-app/src-tauri/target/release/claude-status-pet.exe` 复制成下面两个文件（钩子用无后缀的那个，启动用 `.exe` 那个）：
 
-> **⚠️ After first installation, restart your agent session** for the hooks and skill to take effect.
+   ```
+   %USERPROFILE%\.claude\pet-data\bin\claude-status-pet-windows-x64.exe
+   %USERPROFILE%\.claude\pet-data\bin\claude-status-pet
+   ```
 
-That's it! A pet will appear on your next session. 🎉
+4. **加自动启动钩子**：在 Claude Code 用户配置 `settings.json` 的 `hooks.SessionStart` 里加一条：
 
-## Features
+   ```json
+   {
+     "type": "command",
+     "command": "powershell -NoProfile -Command 'Start-Process -FilePath \"$env:USERPROFILE\\.claude\\pet-data\\bin\\claude-status-pet-windows-x64.exe\" -ArgumentList \"run\",\"--all\" -WindowStyle Hidden'",
+     "async": true,
+     "timeout": 15
+   }
+   ```
 
-- 🔴 **Real-time status** — watch your pet react as the assistant reads, edits, searches, thinks
-- 🎭 **15+ characters** — Ferris (SVG), Mona & Kuromi (GIF), Go Gopher (SVG), Fluent Emoji & Cat (PNG), and 6 ASCII art buddies
-- 💃 **Animated** — unique animations per state (floating, wiggling, bouncing, sleeping)
-- 🪟 **Multi-session** — each session gets its own pet window
-- 🎨 **Customizable** — right-click to change character, colors, font size
-- ⚡ **Lightweight** — ~5MB binary, ~20MB RAM (built with Tauri)
+   重复启动无害：已有一只在运行时，新进程发现全局锁 `pet-all.lock` 后直接退出。
 
-## Usage
+**不要执行 `/pet update`**，它会下载上游的原版程序覆盖本版本；也不要再用 `/pet on`，它会额外开一只只跟单个会话的宠物。
 
-**Right-click** the pet to open the menu:
-- Switch character (Ferris, Go Gopher, Mona, Kuromi, Fluent Emoji, Fluent Cat, Chonk, Cat, Ghost, Robot, Duck, Axolotl, Snail)
-- Customize colors, background, font size
-- Exit the pet
+## 自定义角色
 
-**`/pet` commands** (in Claude Code, Copilot CLI, or VS Code Copilot):
+角色包放在 `%USERPROFILE%\.claude\pet-data\characters\<角色名>\`，格式见 [docs/CUSTOM-CHARACTERS.md](docs/CUSTOM-CHARACTERS.md)。
 
-| Command | Action |
-|---------|--------|
-| `/pet` or `/pet on` | Launch the pet |
-| `/pet update` | Update binary, hooks, skill, and assets |
-| `/pet status` | Show config and active sessions |
+注意：自定义角色只读取 `character.json` 里明确写出的状态键，缺失的状态一律用 idle 的图；文档里提到的 `working` 键对自定义角色不生效。
 
-> **Tip:** Switch characters and customize colors via the right-click menu.
-
-### Create Your Own Character
-
-Ask your AI assistant:
-
-> Read https://raw.githubusercontent.com/moeyui1/claude-status-pet/main/docs/CUSTOM-CHARACTERS.md and create a custom character pack for me
-
-## Compatibility
-
-| AI Agent | Plugin Install | Status |
-|----------|:---:|--------|
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (CLI) | ✅ | Fully supported |
-| [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) | ✅ | Fully supported |
-| VS Code Copilot (Agent Mode) | ✅ | Fully supported |
-| Cursor | — | Not supported yet |
-| OpenCode | — | Not supported yet |
-
-> Want to add support for another agent? See [Adding a New Adapter](CONTRIBUTING.md#adding-a-new-ai-agent-adapter).
->
-> 💡 Multiple agents can run simultaneously — each gets its own pet window.
-
-## Other Installation Methods
-
-<details>
-<summary>🔧 Build from source</summary>
-
-Prerequisites: [Rust](https://rustup.rs/), [Node.js](https://nodejs.org/)
-
-```bash
-git clone https://github.com/moeyui1/claude-status-pet.git
-cd claude-status-pet/pet-app
-npm install
-npx tauri build
-```
-
-Binary output: `pet-app/src-tauri/target/release/claude-status-pet(.exe)`
-
-</details>
-
-## Uninstall
-
-The easiest way — run in your AI assistant:
+## 工作原理
 
 ```
-/pet uninstall
+Claude Code ──钩子──▶ write-status ──▶ status-<会话ID>.json ──文件监听──▶ 宠物窗口
+                      （写完立即退出）                              （汇总模式下读取全部会话）
 ```
 
-This stops the pet, removes all data, scripts, and assets. Then uninstall the plugin:
+钩子事件到状态的对应关系见 [docs/HOOKS.md](docs/HOOKS.md)，开发说明见 [CLAUDE.md](CLAUDE.md)。
 
-- Claude Code: `/plugin uninstall claude-status-pet`
-- Copilot CLI: `/plugin uninstall claude-status-pet-copilot@claude-status-pet-copilot` (inside Copilot CLI session)
-- VS Code: Command Palette → `Chat: Uninstall Plugin`
+## 致谢
 
-## How It Works
+- 上游项目：[moeyui1/claude-status-pet](https://github.com/moeyui1/claude-status-pet)
+- **Ferris**：[free-ferris-pack](https://github.com/MariaLetta/free-ferris-pack)，Maria Letta（CC0）
+- **Go Gopher**：[gophers](https://github.com/egonelbre/gophers)，Egon Elbre（CC0），原始设计 Renee French
+- **Fluent Emoji**：[fluentui-emoji](https://github.com/microsoft/fluentui-emoji)，Microsoft（MIT）
+- **Mona**：[GitHub on GIPHY](https://giphy.com/GitHub)（运行时下载）
+- **Kuromi**：[Sanrio Korea on GIPHY](https://giphy.com/SanrioKorea)（运行时下载）
+- **ASCII 角色**：参考 cpaczek 的 [any-buddy](https://github.com/cpaczek/any-buddy)
+- 基于 [Tauri](https://tauri.app/) 构建
 
-```
-🤖 AI Assistant ──hook event──▶ 📝 write-status ──JSON──▶ 🦀 Desktop Pet (Tauri)
-(Claude / Copilot)              status-{id}.json          file watcher → UI update
-```
+## 许可
 
-The pet is **decoupled from any specific tool** — it just watches a JSON status file. See [`docs/HOOKS.md`](docs/HOOKS.md) for the full hook event → status mapping and how to add support for other assistants.
-
-## Credits
-
-- **Ferris**: [free-ferris-pack](https://github.com/MariaLetta/free-ferris-pack) by Maria Letta (CC0)
-- **Go Gopher**: [gophers](https://github.com/egonelbre/gophers) by Egon Elbre (CC0), original design by Renee French
-- **Fluent Emoji**: [fluentui-emoji](https://github.com/microsoft/fluentui-emoji) by Microsoft (MIT)
-- **Mona**: [GitHub on GIPHY](https://giphy.com/GitHub) (downloaded at runtime)
-- **Kuromi**: [Sanrio Korea on GIPHY](https://giphy.com/SanrioKorea) (downloaded at runtime)
-- **ASCII sprites**: inspired by [any-buddy](https://github.com/cpaczek/any-buddy) by cpaczek
-- Built with [Tauri](https://tauri.app/)
-
-## License
-
-[AGPL-3.0-only](LICENSE)
+[AGPL-3.0-only](LICENSE)，与上游一致。修改后的版本如果分发给他人，需要同样以 AGPL-3.0 公开源码。
