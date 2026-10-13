@@ -1,10 +1,10 @@
-/// Claude Code adapter
-///
-/// Parses Claude Code hook JSON from stdin:
-/// - Events: PascalCase (UserPromptSubmit, PreToolUse, Stop, etc.)
-/// - Tool names: PascalCase (Edit, Read, Bash, Grep, etc.)
-/// - Tool input: snake_case keys (file_path, command, etc.)
-/// - Session ID: provided in JSON
+//! Claude Code adapter
+//!
+//! Parses Claude Code hook JSON from stdin:
+//! - Events: PascalCase (UserPromptSubmit, PreToolUse, Stop, etc.)
+//! - Tool names: PascalCase (Edit, Read, Bash, Grep, etc.)
+//! - Tool input: snake_case keys (file_path, command, etc.)
+//! - Session ID: provided in JSON
 use super::{basename, extract_str, truncate, Adapter, NormalizedEvent, StdinInput};
 use std::path::Path;
 
@@ -86,7 +86,7 @@ impl Adapter for ClaudeAdapter {
                 // Write initial idle status
                 ("done".into(), String::new(), "Session started".into())
             }
-            _ => ("prompt".into(), String::new(), format!("{}", hook)),
+            _ => ("prompt".into(), String::new(), hook.to_string()),
         };
 
         Some(NormalizedEvent {

@@ -1,17 +1,17 @@
-/// VS Code Copilot adapter
-///
-/// Parses VS Code Copilot hook data:
-/// - Events: PascalCase from stdin hookEventName (SessionStart, PreToolUse, Stop, etc.)
-/// - Tool names: snake_case (replace_string_in_file, read_file, etc.) or camelCase (editFiles)
-/// - Tool input: tool_input object in stdin
-/// - Session ID: provided in stdin sessionId
-///
-/// Key differences from Copilot CLI adapter:
-/// - Events come from stdin hookEventName (PascalCase), not CLI arg (camelCase)
-/// - PostToolUse → thinking (prevents idle flash between tools)
-/// - PreCompact → ignored (no status change)
-/// - No sessionEnd/errorOccurred — Stop is the session end
-/// - SubagentStart/SubagentStop supported
+//! VS Code Copilot adapter
+//!
+//! Parses VS Code Copilot hook data:
+//! - Events: PascalCase from stdin hookEventName (SessionStart, PreToolUse, Stop, etc.)
+//! - Tool names: snake_case (replace_string_in_file, read_file, etc.) or camelCase (editFiles)
+//! - Tool input: tool_input object in stdin
+//! - Session ID: provided in stdin sessionId
+//!
+//! Key differences from Copilot CLI adapter:
+//! - Events come from stdin hookEventName (PascalCase), not CLI arg (camelCase)
+//! - PostToolUse → thinking (prevents idle flash between tools)
+//! - PreCompact → ignored (no status change)
+//! - No sessionEnd/errorOccurred — Stop is the session end
+//! - SubagentStart/SubagentStop supported
 use super::{basename, extract_str, md5_short, truncate, Adapter, NormalizedEvent, StdinInput};
 use std::path::Path;
 
@@ -117,7 +117,7 @@ impl Adapter for VscodeAdapter {
             ),
             "SubagentStop" => ("prompt".into(), String::new(), "Sub-agent finished".into()),
             "Stop" => ("done".into(), String::new(), "Done".into()),
-            _ => ("prompt".into(), String::new(), format!("{}", hook)),
+            _ => ("prompt".into(), String::new(), hook.to_string()),
         };
 
         Some(NormalizedEvent {

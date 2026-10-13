@@ -2,7 +2,7 @@ use notify::{EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
@@ -18,20 +18,20 @@ const ASSETS_REPO: &str = "moeyui1/claude-status-pet";
 
 fn init_debug(args: &[String]) {
     let _ = args; // reserved for future use
-    if std::env::var("PET_DEBUG").map_or(false, |v| v == "1" || v == "true") {
+    if std::env::var("PET_DEBUG").is_ok_and(|v| v == "1" || v == "true") {
         DEBUG_ENABLED.store(true, Ordering::Relaxed);
     }
 }
 
-fn debug_log(path: &PathBuf, msg: &str) {
+fn debug_log(path: &Path, msg: &str) {
     if !DEBUG_ENABLED.load(Ordering::Relaxed) {
         return;
     }
     // path can be a status file or the log file itself — resolve to pet-debug.log in same dir
     let log_path = if path.is_dir() {
         path.join("pet-debug.log")
-    } else if path.file_name().map_or(false, |f| f == "pet-debug.log") {
-        path.clone()
+    } else if path.file_name().is_some_and(|f| f == "pet-debug.log") {
+        path.to_path_buf()
     } else {
         path.parent().unwrap_or(path).join("pet-debug.log")
     };
@@ -195,7 +195,7 @@ fn spawn_status_file_watcher(status_file: PathBuf, handle: tauri::AppHandle) {
     }
     let log_path = status_file.clone();
     spawn_dir_watcher(dir, log_path.clone(), move |event| {
-        if !event.paths.iter().any(|p| *p == status_file) {
+        if !event.paths.contains(&status_file) {
             return;
         }
         debug_log(
@@ -434,7 +434,7 @@ async fn download_dlc(
         .map_err(|e| e.to_string())?
 }
 
-fn download_dlc_blocking(dir: &PathBuf, dlc_name: &str) -> Result<bool, String> {
+fn download_dlc_blocking(dir: &Path, dlc_name: &str) -> Result<bool, String> {
     if !is_safe_session_id(dlc_name) {
         return Err("Invalid DLC name".to_string());
     }
@@ -681,7 +681,7 @@ fn scan_packs_in_dir(dir: &PathBuf, group: &str, packs: &mut Vec<CharacterPack>)
                 }
             } else {
                 // Directory exists but no character.json — check if has image files
-                let has_images = fs::read_dir(&path).ok().map_or(false, |entries| {
+                let has_images = fs::read_dir(&path).ok().is_some_and(|entries| {
                     entries.filter_map(|e| e.ok()).any(|e| {
                         let ext = e
                             .path()
@@ -745,7 +745,7 @@ fn cmd_write_status(args: &[String]) {
                 "stdin read in {:?}, len={}, data={}",
                 t0.elapsed(),
                 stdin_data.len(),
-                &stdin_data
+                stdin_data
             ),
         );
         let stdin: adapter::StdinInput = serde_json::from_str(&stdin_data).unwrap_or_default();
@@ -859,10 +859,11 @@ fn cleanup_stale_status(pet_dir: &PathBuf) {
             }
         }
         // Also clean up orphaned lock files whose process is no longer alive
-        if name_str.starts_with("pet-") && name_str.ends_with(".lock") {
-            if !is_lock_alive(&entry.path().to_path_buf()) {
-                let _ = fs::remove_file(entry.path());
-            }
+        if name_str.starts_with("pet-")
+            && name_str.ends_with(".lock")
+            && !is_lock_alive(&entry.path().to_path_buf())
+        {
+            let _ = fs::remove_file(entry.path());
         }
     }
 }
@@ -1182,6 +1183,8 @@ fn read_stdin() -> String {
         let mut escape = false;
         let mut started = false;
 
+        // Stdin is buffered internally; byte-wise reads let us stop at the closing brace before EOF
+        #[allow(clippy::unbuffered_bytes)]
         for byte in std::io::stdin().bytes() {
             let Ok(b) = byte else { break };
             buf.push(b);
@@ -1266,7 +1269,7 @@ pub fn run() {
         std::process::exit(0); // Force exit — don't wait for stdin reader thread
     }
 
-    if std::env::var("PET_DEBUG").map_or(false, |v| v == "1" || v == "true") {
+    if std::env::var("PET_DEBUG").is_ok_and(|v| v == "1" || v == "true") {
         DEBUG_ENABLED.store(true, Ordering::Relaxed);
     }
 

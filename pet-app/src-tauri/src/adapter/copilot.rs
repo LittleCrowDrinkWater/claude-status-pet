@@ -1,24 +1,24 @@
-/// GitHub Copilot adapter
-///
-/// Parses Copilot CLI hook data per the official reference:
-/// https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-hooks-reference
-///
-/// - Event name: from `--copilot-event` CLI arg (camelCase, e.g. `preToolUse`)
-/// - Tool names: standard Copilot CLI names (`bash`, `edit`, `view`, `grep`, `glob`,
-///   `create`, `web_fetch`, `task`, `powershell`, `ask_user`)
-/// - Tool args: `toolArgs` field — JSON string for `preToolUse`, object for `postToolUse`
-/// - Session ID: `sessionId` from stdin (fallback: hash of cwd)
-///
-/// Quirks handled:
-/// - postToolUse: mapped to "prompt"/thinking (avoids idle flash between tools)
-/// - postToolUse with tool_name=="task_complete": mapped to "done"/idle
-///   (autopilot mode: no agentStop fires between iterations — task_complete is the
-///   only end-of-turn signal available)
-/// - postToolUseFailure: mapped to "error" with the error message
-/// - preCompact / non-actionable notifications: ignored (no status change)
-/// - notification (permission_prompt / elicitation_dialog): mapped to "waiting"
-/// - subagentStart / subagentStop: mapped to "delegating" / "thinking"
-/// - sessionEnd: writes "closed" (matches Claude — does NOT delete the status file)
+//! GitHub Copilot adapter
+//!
+//! Parses Copilot CLI hook data per the official reference:
+//! https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-hooks-reference
+//!
+//! - Event name: from `--copilot-event` CLI arg (camelCase, e.g. `preToolUse`)
+//! - Tool names: standard Copilot CLI names (`bash`, `edit`, `view`, `grep`, `glob`,
+//!   `create`, `web_fetch`, `task`, `powershell`, `ask_user`)
+//! - Tool args: `toolArgs` field — JSON string for `preToolUse`, object for `postToolUse`
+//! - Session ID: `sessionId` from stdin (fallback: hash of cwd)
+//!
+//! Quirks handled:
+//! - postToolUse: mapped to "prompt"/thinking (avoids idle flash between tools)
+//! - postToolUse with tool_name=="task_complete": mapped to "done"/idle
+//!   (autopilot mode: no agentStop fires between iterations — task_complete is the
+//!   only end-of-turn signal available)
+//! - postToolUseFailure: mapped to "error" with the error message
+//! - preCompact / non-actionable notifications: ignored (no status change)
+//! - notification (permission_prompt / elicitation_dialog): mapped to "waiting"
+//! - subagentStart / subagentStop: mapped to "delegating" / "thinking"
+//! - sessionEnd: writes "closed" (matches Claude — does NOT delete the status file)
 use super::{basename, get_str, md5_short, truncate, Adapter, NormalizedEvent, StdinInput};
 use std::path::Path;
 

@@ -1,7 +1,7 @@
-/// Adapter system: converts agent-specific hook data into normalized events.
-///
-/// Each adapter parses a specific agent's stdin JSON format and produces
-/// a NormalizedEvent that the write-status command can process.
+//! Adapter system: converts agent-specific hook data into normalized events.
+//!
+//! Each adapter parses a specific agent's stdin JSON format and produces
+//! a NormalizedEvent that the write-status command can process.
 pub mod claude;
 pub mod copilot;
 pub mod vscode;

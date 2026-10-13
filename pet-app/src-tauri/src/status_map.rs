@@ -1,5 +1,5 @@
-/// Universal tool name → pet state mapping.
-/// Used by all adapters and CLI args mode.
+//! Universal tool name → pet state mapping.
+//! Used by all adapters and CLI args mode.
 
 /// All possible pet states
 pub const STATES: &[&str] = &[
@@ -65,7 +65,7 @@ pub fn tool_detail(tool: &str, detail: &str, file: &str) -> String {
         "reading" => format!("Reading {}", basename),
         "searching" => {
             if file.is_empty() {
-                format!("Searching...")
+                "Searching...".to_string()
             } else {
                 format!("Searching: {}", truncate(file, 30))
             }
@@ -77,7 +77,7 @@ pub fn tool_detail(tool: &str, detail: &str, file: &str) -> String {
                 format!("Running: {}", truncate(file, 40))
             }
         }
-        "delegating" => format!("Delegating..."),
+        "delegating" => "Delegating...".to_string(),
         _ => format!("Using {}", tool),
     }
 }
