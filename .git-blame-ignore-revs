@@ -1,2 +1,4 @@
 # rustfmt applied to the whole crate for the first time
 2f7b3224e0a7abaadb80240100612f2952c5d68c
+# tests.rs dedented after removing the redundant inner module
+c8b7bb5362cea7af501321f07cb3556372167ac8
