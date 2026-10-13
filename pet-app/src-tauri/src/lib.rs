@@ -73,9 +73,12 @@ fn default_status_path() -> PathBuf {
     home.join(".claude").join("pet-data").join("status.json")
 }
 
-fn read_status(path: &PathBuf) -> Option<StatusPayload> {
-    let content = fs::read_to_string(path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+fn read_status(path: &Path) -> Option<StatusPayload> {
+    parse_status(&fs::read_to_string(path).ok()?)
+}
+
+fn parse_status(content: &str) -> Option<StatusPayload> {
+    let v: serde_json::Value = serde_json::from_str(content).ok()?;
     Some(StatusPayload {
         state: v["state"].as_str().unwrap_or("idle").to_string(),
         detail: v["detail"].as_str().unwrap_or("").to_string(),
@@ -186,13 +189,10 @@ fn spawn_status_file_watcher(status_file: PathBuf, handle: tauri::AppHandle) {
         debug_log(&status_file, "FATAL: status path has no parent dir");
         return;
     };
-    if let Some(status) = read_status(&status_file) {
-        debug_log(
-            &status_file,
-            &format!("Initial status: state={}", status.state),
-        );
-        let _ = handle.emit("status-update", status);
-    }
+    // One rename-replace reports both Remove and Modify for the status file; emitting each would
+    // re-roll the random sprite twice per update
+    let mut last_content = None;
+    emit_status_if_changed(&status_file, &mut last_content, &handle);
     let log_path = status_file.clone();
     spawn_dir_watcher(dir, log_path.clone(), move |event| {
         if !event.paths.contains(&status_file) {
@@ -204,32 +204,22 @@ fn spawn_status_file_watcher(status_file: PathBuf, handle: tauri::AppHandle) {
         );
         match event.kind {
             EventKind::Modify(_) | EventKind::Create(_) => {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                if let Some(status) = read_status(&status_file) {
-                    debug_log(
-                        &log_path,
-                        &format!("Emit: state={}, detail={}", status.state, status.detail),
-                    );
-                    let _ = handle.emit("status-update", status);
-                } else {
-                    debug_log(
-                        &log_path,
-                        "Read failed after Modify/Create (file may be mid-write)",
-                    );
+                // write-status replaces the file atomically; the retry covers writers that do not
+                if !emit_status_if_changed(&status_file, &mut last_content, &handle) {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    emit_status_if_changed(&status_file, &mut last_content, &handle);
                 }
             }
             EventKind::Remove(_) => {
-                // Windows writeFileSync reports Remove for an in-place rewrite; confirm before closing
-                std::thread::sleep(std::time::Duration::from_millis(300));
+                // Replacing the file by rename reports Remove for it first, and an in-place rewrite
+                // can too; only a file still missing after a pause means the session is gone
+                if !status_file.exists() {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                }
                 if status_file.exists() {
-                    if let Some(status) = read_status(&status_file) {
-                        debug_log(
-                            &log_path,
-                            &format!("Emit after spurious Remove: state={}", status.state),
-                        );
-                        let _ = handle.emit("status-update", status);
-                    }
+                    emit_status_if_changed(&status_file, &mut last_content, &handle);
                 } else {
+                    last_content = None;
                     debug_log(&log_path, "File truly deleted, emitting closed state");
                     let _ = handle.emit(
                         "status-update",
@@ -247,6 +237,33 @@ fn spawn_status_file_watcher(status_file: PathBuf, handle: tauri::AppHandle) {
             _ => debug_log(&log_path, &format!("Ignored event: {:?}", event.kind)),
         }
     });
+}
+
+/// Emits the status file's content unless it equals what was emitted last.
+/// Returns false when the file cannot be read or parsed.
+fn emit_status_if_changed(
+    status_file: &Path,
+    last_content: &mut Option<String>,
+    handle: &tauri::AppHandle,
+) -> bool {
+    let Ok(content) = fs::read_to_string(status_file) else {
+        debug_log(status_file, "Read failed (file missing or mid-write)");
+        return false;
+    };
+    if last_content.as_deref() == Some(content.as_str()) {
+        return true;
+    }
+    let Some(status) = parse_status(&content) else {
+        debug_log(status_file, "Parse failed (file may be mid-write)");
+        return false;
+    };
+    debug_log(
+        status_file,
+        &format!("Emit: state={}, detail={}", status.state, status.detail),
+    );
+    let _ = handle.emit("status-update", status);
+    *last_content = Some(content);
+    true
 }
 
 /// Aggregate mode: pings the frontend whenever any status-*.json changes; the frontend then
@@ -824,7 +841,7 @@ fn cmd_write_status(args: &[String]) {
             "claude_pid": claude_process.map(|(pid, _)| pid),
             "claude_started": claude_process.map(|(_, started)| started)
         });
-        let _ = fs::write(&status_file, status.to_string());
+        write_status_file(&status_file, &status.to_string());
     }
 
     // Output session info to stdout (hook script captures this to launch GUI)
@@ -837,7 +854,30 @@ fn cmd_write_status(args: &[String]) {
     );
 }
 
-fn is_still_delegating(status_file: &PathBuf) -> bool {
+/// Parallel tool calls run several async hooks at once, and two truncate-then-write calls on
+/// the same file can leave trailing bytes of the longer status behind, so readers must only
+/// ever see a complete file.
+fn write_status_file(status_file: &Path, content: &str) {
+    let file_name = status_file
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let temp_file =
+        status_file.with_file_name(format!(".{}.{}.tmp", file_name, std::process::id()));
+    let replaced =
+        fs::write(&temp_file, content).is_ok() && fs::rename(&temp_file, status_file).is_ok();
+    if !replaced {
+        // The rename fails if another program holds the status file open without delete sharing
+        let _ = fs::remove_file(&temp_file);
+        let _ = fs::write(status_file, content);
+    }
+}
+
+fn is_temp_status_file_name(name: &str) -> bool {
+    name.starts_with(".status-") && name.ends_with(".tmp")
+}
+
+fn is_still_delegating(status_file: &Path) -> bool {
     read_status(status_file).is_some_and(|status| status.state == "delegating")
 }
 
@@ -849,7 +889,7 @@ fn cleanup_stale_status(pet_dir: &PathBuf) {
     for entry in entries.filter_map(|e| e.ok()) {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if is_status_file_name(&name_str) {
+        if is_status_file_name(&name_str) || is_temp_status_file_name(&name_str) {
             if let Ok(meta) = entry.metadata() {
                 if let Ok(modified) = meta.modified() {
                     if modified < cutoff {
