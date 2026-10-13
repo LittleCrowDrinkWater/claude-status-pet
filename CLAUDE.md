@@ -66,6 +66,7 @@ claude-status-pet/
 │       │   │   └── copilot.rs  # GitHub Copilot CLI adapter
 │       │   ├── status_map.rs   # Universal tool→state fuzzy matching
 │       │   ├── session_meta.rs # Title, git branch and turn/state timing carried across events
+│       │   ├── speech.rs    # Bubble texts: thought before a tool call (transcript tail), first sentence of the reply
 │       │   └── tests.rs     # Unit tests
 │       ├── Cargo.toml       # Dependencies: tauri, serde, notify, base64, ureq, zip
 │       └── tauri.conf.json
@@ -256,9 +257,12 @@ Use the `/release` skill or manually:
   "title": "fix the login bug",
   "branch": "main",
   "turn_started": 1791863087864,
-  "state_since": 1791863090101
+  "state_since": 1791863090101,
+  "thought": "Let me check the config first.",
+  "reply": null
 }
 ```
 
 - `claude_pid` / `claude_started`: the `claude.exe` ancestor (Windows only), reused from the previous status while that process still runs.
 - `title`, `branch`, `turn_started`, `state_since`: carried across events by `session_meta.rs`. `title` is the `/rename` name or else the first prompt; `turn_started` resets on each prompt; `state_since` resets only when the state group changes (all busy states form one "working" group). Times are Unix ms.
+- `thought` / `reply` (Claude Code only, never carried over): `thought` is the text Claude wrote before this tool call, found by `tool_use_id` within the last 256KB of `transcript_path`; null when it wrote nothing or the transcript has not caught up (it is written asynchronously, never wait for it). `reply` is the first sentence of `last_assistant_message` on Stop, markdown stripped, at most 120 chars.

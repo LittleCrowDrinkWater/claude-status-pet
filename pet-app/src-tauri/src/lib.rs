@@ -9,6 +9,7 @@ use tauri::{Emitter, Manager};
 
 pub mod adapter;
 pub mod session_meta;
+pub mod speech;
 pub mod status_map;
 #[cfg(test)]
 mod tests;
@@ -67,6 +68,8 @@ struct StatusPayload {
     branch: String,
     turn_started: Option<u64>,
     state_since: Option<u64>,
+    thought: String,
+    reply: String,
 }
 
 fn default_status_path() -> PathBuf {
@@ -90,6 +93,8 @@ fn parse_status(content: &str) -> Option<StatusPayload> {
         branch: v["branch"].as_str().unwrap_or("").to_string(),
         turn_started: v["turn_started"].as_u64(),
         state_since: v["state_since"].as_u64(),
+        thought: v["thought"].as_str().unwrap_or("").to_string(),
+        reply: v["reply"].as_str().unwrap_or("").to_string(),
     })
 }
 
@@ -122,6 +127,8 @@ struct SessionInfo {
     branch: String,
     turn_started: Option<u64>,
     state_since: Option<u64>,
+    thought: String,
+    reply: String,
     status_file: String,
     last_modified: u64,
     /// None when the status file has no Claude process recorded (older binary, other agents, non-Windows)
@@ -398,6 +405,8 @@ fn collect_sessions(skip_locked: bool) -> Vec<SessionInfo> {
                 branch: status.branch,
                 turn_started: status.turn_started,
                 state_since: status.state_since,
+                thought: status.thought,
+                reply: status.reply,
                 status_file: status_path.to_string_lossy().to_string(),
                 last_modified,
                 alive,
@@ -790,6 +799,9 @@ fn cmd_write_status(args: &[String]) {
             prompt: None,
             cwd: String::new(),
             session_title: None,
+            reply: None,
+            transcript_path: None,
+            tool_use_id: None,
         }
     } else {
         eprintln!("Usage: claude-status-pet write-status --event <prompt|tool|done|error|offline> [--tool <name>] [--detail <text>] [--session-id <id>]");
@@ -849,6 +861,12 @@ fn cmd_write_status(args: &[String]) {
             unix_millis(),
             || session_meta::git_branch(&ev.cwd),
         );
+        let thought = ev
+            .transcript_path
+            .as_deref()
+            .zip(ev.tool_use_id.as_deref())
+            .and_then(|(transcript, id)| speech::thought_before_tool(Path::new(transcript), id));
+        let reply = ev.reply.as_deref().and_then(speech::first_sentence);
         let status = serde_json::json!({
             "state": state, "detail": ev.detail, "tool": ev.tool,
             "event": ev.event, "session_id": session_id,
@@ -856,7 +874,8 @@ fn cmd_write_status(args: &[String]) {
             "claude_pid": claude_process.map(|(pid, _)| pid),
             "claude_started": claude_process.map(|(_, started)| started),
             "title": meta.title, "branch": meta.branch,
-            "turn_started": meta.turn_started, "state_since": meta.state_since
+            "turn_started": meta.turn_started, "state_since": meta.state_since,
+            "thought": thought, "reply": reply
         });
         write_status_file(&status_file, &status.to_string());
     }

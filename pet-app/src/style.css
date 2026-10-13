@@ -56,6 +56,37 @@ body:not(.placed) {
   transition: border-top-color 0.3s ease;
 }
 
+/* Thought bubble while working: rounder body, a trail of two dots instead of the tail.
+   z-index keeps the dots above the pet, whose animation transform would otherwise paint over them. */
+#speech-bubble.thought {
+  border-radius: 20px;
+  z-index: 1;
+}
+
+#speech-bubble.thought::after,
+#speech-bubble.thought::before {
+  content: '';
+  position: absolute;
+  background: rgba(255, 255, 255, 0.95);
+  border: 2px solid var(--bubble-color, #e06c3c);
+  border-radius: 50%;
+  transform: none;
+}
+
+#speech-bubble.thought::after {
+  width: 10px;
+  height: 10px;
+  bottom: -11px;
+  left: calc(50% - 9px);
+}
+
+#speech-bubble.thought::before {
+  width: 6px;
+  height: 6px;
+  bottom: -18px;
+  left: calc(50% - 2px);
+}
+
 #speech-bubble.hidden {
   opacity: 0;
   transform: scale(0.8);
@@ -138,6 +169,13 @@ body:not(.placed) {
   margin-top: 2px;
   text-shadow: 0 0 4px rgba(224, 108, 60, 0.4);
   transition: color 0.3s ease;
+}
+
+/* Lowercase so "12m" does not read as months */
+.state-duration {
+  text-transform: none;
+  font-weight: 500;
+  letter-spacing: 0;
 }
 
 /* ── Animations per state ── */

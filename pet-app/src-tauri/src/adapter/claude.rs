@@ -101,6 +101,15 @@ impl Adapter for ClaudeAdapter {
                 .flatten(),
             cwd: cwd.to_string(),
             session_title: stdin.session_title.clone(),
+            reply: (hook == "Stop")
+                .then(|| stdin.last_assistant_message.clone())
+                .flatten(),
+            transcript_path: (hook == "PreToolUse")
+                .then(|| stdin.transcript_path.clone())
+                .flatten(),
+            tool_use_id: (hook == "PreToolUse")
+                .then(|| stdin.tool_use_id.clone())
+                .flatten(),
         })
     }
 }

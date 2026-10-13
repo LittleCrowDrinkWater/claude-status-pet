@@ -184,6 +184,7 @@ let petSessionBg = localStorage.getItem('petSessionBg') || '';
 let petFontSize = parseInt(localStorage.getItem('petFontSize') || '16');
 let petScale = parseFloat(localStorage.getItem('petScale') || '1');
 let petMotion = localStorage.getItem('petMotion') !== 'off';
+let petSpeech = localStorage.getItem('petSpeech') !== 'off';
 let currentState = 'idle';
 let currentImgSrc = '';
 let requestedImgSrc = '';
@@ -394,9 +395,18 @@ function startAsciiAnimation(frames) {
 
 // ── Main update ──
 
+// What the agent said replaces the generic tool line. Settings can turn it off, since the pet
+// sits on the desktop and would show the conversation during screen sharing.
+function spokenText(status) {
+  if (!petSpeech) return '';
+  if (status.state === 'idle') return status.reply || '';
+  if (WORKING_STATES.has(status.state)) return status.thought || '';
+  return '';
+}
+
 function updateStatus(status) {
   const state = status.state || 'idle';
-  const detail = status.detail || '';
+  const detail = spokenText(status) || status.detail || '';
   const sessionName = status.session_name || '';
 
   if (state === 'closed' && window.__TAURI__) {
@@ -432,6 +442,9 @@ function updateStatus(status) {
   }
 
   stateLabel.textContent = state;
+  bubble.classList.toggle('thought', WORKING_STATES.has(state));
+  // Long texts are cut to two lines; hovering shows the rest
+  statusText.title = detail;
 
   // Speech bubble — always visible for active states, 30s timeout for idle/offline
   if (detail && state !== 'offline') {
@@ -633,6 +646,12 @@ function buildConfigPage() {
     saveConfig('petMotion', petMotion ? 'on' : 'off');
     buildMenu();
   });
+  addMenuItem(charMenu, 'Speech: ' + (petSpeech ? 'On' : 'Off'), () => {
+    petSpeech = !petSpeech;
+    saveConfig('petSpeech', petSpeech ? 'on' : 'off');
+    rerenderAggregate();
+    buildMenu();
+  });
   addMenuItem(charMenu, 'Reset Position', () => {
     closeMenu();
     if (window.__TAURI__) moveToDefaultCorner().catch(() => {});
@@ -673,11 +692,13 @@ function buildConfigPage() {
   });
   addDivider(charMenu);
   addMenuItem(charMenu, 'Reset Default', () => {
-    petScale = 1; petTextColor = ''; petSessionBg = ''; petFillColor = ''; petBgColor = ''; petMotion = true;
+    petScale = 1; petTextColor = ''; petSessionBg = ''; petFillColor = ''; petBgColor = ''; petMotion = true; petSpeech = true;
     localStorage.removeItem('petScale'); localStorage.removeItem('petTextColor');
     localStorage.removeItem('petSessionBg'); localStorage.removeItem('petFillColor');
     localStorage.removeItem('petBgColor'); localStorage.removeItem('petMotion');
+    localStorage.removeItem('petSpeech');
     applyConfig();
+    rerenderAggregate();
     buildConfigPage();
   }, 'menu-item-danger');
 }
@@ -924,30 +945,51 @@ function renderAggregate() {
     session_name: label,
     session_color: sessionColor(pick.session_id),
     session_tooltip: sessionTooltip(pick, now),
-  }, durationSuffix(pick, now));
+    thought: pick.thought,
+    reply: pick.reply,
+  }, stateDuration(pick, now));
+}
+
+// Draws the shown session again after a setting changed how it looks
+function rerenderAggregate() {
+  if (!aggregateMode) return;
+  lastAggregateKey = '';
+  renderAggregate();
 }
 
 // Shown only for states that need attention or are taking a while; idle needs no clock
-function durationSuffix(session, now) {
+function stateDuration(session, now) {
   if (!WORKING_STATES.has(session.state) && session.state !== 'waiting') return '';
   const elapsed = now - stateStartedAt(session);
-  return elapsed >= 60000 ? ' · ' + formatAge(elapsed) : '';
+  return elapsed >= 60000 ? formatAge(elapsed) : '';
+}
+
+// The duration sits on the state label, not in the bubble, where a two-line thought would cut it off
+function renderStateLabel(state, duration) {
+  stateLabel.textContent = state;
+  if (!duration) return;
+  const span = document.createElement('span');
+  span.className = 'state-duration';
+  span.textContent = ' · ' + duration;
+  stateLabel.appendChild(span);
 }
 
 // Polling re-renders the same status every few seconds; skip unchanged ones so the idle bubble can time out.
-// A ticking duration only rewrites the bubble text, so it neither replays the bubble animation nor re-rolls the sprite.
-function applyAggregateStatus(status, suffix = '') {
-  const key = status.state + '|' + status.detail + '|' + status.session_name + '|' + status.session_color;
+// A ticking duration only rewrites the label, so it neither replays the bubble animation nor re-rolls the sprite.
+function applyAggregateStatus(status, duration = '') {
+  const text = spokenText(status) || status.detail;
+  const key = status.state + '|' + text + '|' + status.session_name + '|' + status.session_color;
   sessionNameEl.title = status.session_tooltip || '';
   if (key === lastAggregateKey) {
-    if (status.detail) statusText.textContent = status.detail + suffix;
+    renderStateLabel(status.state, duration);
     return;
   }
   lastAggregateKey = key;
-  updateStatus({ ...status, detail: status.detail && status.detail + suffix });
+  updateStatus({ ...status, detail: text, thought: '', reply: '' });
+  renderStateLabel(status.state, duration);
   // updateStatus leaves the bubble alone when detail is empty, which would keep showing the
   // previously displayed session's text under this session's label
-  if (!status.detail && status.state !== 'offline') {
+  if (!text && status.state !== 'offline') {
     clearTimeout(bubbleTimeout);
     bubble.classList.add('hidden');
   }
@@ -1179,8 +1221,7 @@ async function preloadAssets() {
   applyConfig();
   if (aggregateMode) {
     // Character packs finished loading after the first aggregate render; draw again with them
-    lastAggregateKey = '';
-    renderAggregate();
+    rerenderAggregate();
   } else {
     updateStatus({ state: 'idle', detail: '' });
   }

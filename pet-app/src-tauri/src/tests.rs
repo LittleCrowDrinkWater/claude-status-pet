@@ -766,6 +766,113 @@ fn test_same_process_requires_matching_start_time() {
     assert!(!crate::is_same_process_running(pid, started + 1));
 }
 
+#[test]
+fn test_claude_stop_carries_reply_and_tool_carries_transcript() {
+    let mut stop = make_stdin(Some("Stop"), None, None, Some("s1"), Some("/proj"));
+    stop.last_assistant_message = Some("All done.".to_string());
+    stop.transcript_path = Some("/t.jsonl".to_string());
+    let ev = adapter::claude::ClaudeAdapter.parse(&stop).unwrap();
+    assert_eq!(ev.reply.as_deref(), Some("All done."));
+    assert_eq!(ev.transcript_path, None);
+
+    let mut tool = make_stdin(
+        Some("PreToolUse"),
+        Some("Bash"),
+        Some(serde_json::json!({"command": "ls"})),
+        Some("s1"),
+        Some("/proj"),
+    );
+    tool.transcript_path = Some("/t.jsonl".to_string());
+    tool.tool_use_id = Some("toolu_1".to_string());
+    tool.last_assistant_message = Some("stale".to_string());
+    let ev = adapter::claude::ClaudeAdapter.parse(&tool).unwrap();
+    assert_eq!(ev.transcript_path.as_deref(), Some("/t.jsonl"));
+    assert_eq!(ev.tool_use_id.as_deref(), Some("toolu_1"));
+    assert_eq!(ev.reply, None);
+}
+
+#[test]
+fn test_first_sentence_from_markdown() {
+    use crate::speech::first_sentence;
+    assert_eq!(
+        first_sentence("推送完成：远端已更新。本地一致。").as_deref(),
+        Some("推送完成：远端已更新。")
+    );
+    assert_eq!(
+        first_sentence("## Summary\n\n- **Fixed** the `app.js` bug. Then more.").as_deref(),
+        Some("Fixed the app.js bug.")
+    );
+    assert_eq!(
+        first_sentence("```rust\nlet x = 1;\n```\n| a | b |\n---\nSee [the docs](https://x.y) now")
+            .as_deref(),
+        Some("See the docs now")
+    );
+    assert_eq!(
+        first_sentence("1. Step one? yes").as_deref(),
+        Some("Step one?")
+    );
+    assert_eq!(first_sentence("# Only a heading\n\n```\ncode\n```"), None);
+    assert_eq!(
+        crate::speech::first_paragraph("Checking A. Then B.\nNext line").as_deref(),
+        Some("Checking A. Then B.")
+    );
+    let long = "字".repeat(200);
+    let capped = first_sentence(&long).unwrap();
+    assert_eq!(capped.chars().count(), 120);
+    assert!(capped.ends_with('…'));
+}
+
+#[test]
+fn test_thought_before_tool_reads_transcript_tail() {
+    use crate::speech::thought_before_tool;
+    let path = std::env::temp_dir().join(format!("pet-transcript-{}.jsonl", std::process::id()));
+    let record = |kind: &str, message_id: &str, content: serde_json::Value| {
+        serde_json::json!({"type": kind, "message": {"id": message_id, "content": content}})
+            .to_string()
+    };
+    let lines = [
+        "x".repeat(300_000),
+        record("user", "", serde_json::json!("fix it")),
+        record(
+            "assistant",
+            "msg_1",
+            serde_json::json!([{"type": "text", "text": "Let me check the **config** first. Then edit."}]),
+        ),
+        record(
+            "assistant",
+            "msg_1",
+            serde_json::json!([{"type": "tool_use", "id": "toolu_a", "name": "Read"}]),
+        ),
+        record(
+            "assistant",
+            "msg_1",
+            serde_json::json!([{"type": "tool_use", "id": "toolu_b", "name": "Read"}]),
+        ),
+        record(
+            "user",
+            "",
+            serde_json::json!([{"type": "tool_result", "tool_use_id": "toolu_a"}]),
+        ),
+        record(
+            "assistant",
+            "msg_2",
+            serde_json::json!([{"type": "tool_use", "id": "toolu_c", "name": "Edit"}]),
+        ),
+    ];
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+    let expected = Some("Let me check the config first. Then edit.".to_string());
+    assert_eq!(thought_before_tool(&path, "toolu_a"), expected);
+    // A parallel call in the same message shares the text written before the first one
+    assert_eq!(thought_before_tool(&path, "toolu_b"), expected);
+    // A message without text must not borrow the previous message's text
+    assert_eq!(thought_before_tool(&path, "toolu_c"), None);
+    // Not written yet, or beyond the tail window
+    assert_eq!(thought_before_tool(&path, "toolu_missing"), None);
+    assert_eq!(thought_before_tool(&path, ""), None);
+    let _ = std::fs::remove_file(&path);
+}
+
 // ── Helper ──
 
 fn make_stdin(
@@ -788,5 +895,8 @@ fn make_stdin(
         agent_name: None,
         prompt: None,
         session_title: None,
+        last_assistant_message: None,
+        transcript_path: None,
+        tool_use_id: None,
     }
 }

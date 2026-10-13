@@ -28,6 +28,11 @@ pub struct NormalizedEvent {
     pub cwd: String,
     /// Name the user gave the session with /rename, when the agent reports one
     pub session_title: Option<String>,
+    /// The agent's final reply, set only when a turn ends
+    pub reply: Option<String>,
+    /// Session transcript and the tool call it holds, set only before a tool runs
+    pub transcript_path: Option<String>,
+    pub tool_use_id: Option<String>,
 }
 
 /// Raw JSON from stdin (loosely typed for all adapters)
@@ -64,6 +69,13 @@ pub struct StdinInput {
     // Claude Code: custom session title, present on SessionStart and UserPromptSubmit once set
     #[serde(default)]
     pub session_title: Option<String>,
+    // Claude Code Stop: text of the final reply of the turn
+    #[serde(default)]
+    pub last_assistant_message: Option<String>,
+    #[serde(default)]
+    pub transcript_path: Option<String>,
+    #[serde(default)]
+    pub tool_use_id: Option<String>,
 }
 
 pub trait Adapter {

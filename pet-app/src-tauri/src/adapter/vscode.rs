@@ -132,6 +132,9 @@ impl Adapter for VscodeAdapter {
                 .flatten(),
             cwd: cwd.to_string(),
             session_title: None,
+            reply: None,
+            transcript_path: None,
+            tool_use_id: None,
         })
     }
 }
