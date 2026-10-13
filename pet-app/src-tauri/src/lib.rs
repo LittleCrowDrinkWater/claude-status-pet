@@ -120,12 +120,26 @@ struct SessionInfo {
     alive: Option<bool>,
 }
 
-fn read_claude_process_alive(path: &PathBuf) -> Option<bool> {
+fn read_claude_process_alive(path: &Path) -> Option<bool> {
+    let (pid, started) = read_claude_process(path)?;
+    Some(is_same_process_running(pid, started))
+}
+
+/// The Claude process PID and creation time recorded in a status file.
+fn read_claude_process(path: &Path) -> Option<(u32, u64)> {
     let content = fs::read_to_string(path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&content).ok()?;
     let pid = u32::try_from(v["claude_pid"].as_u64()?).ok()?;
     let started = v["claude_started"].as_u64()?;
-    Some(is_same_process_running(pid, started))
+    Some((pid, started))
+}
+
+/// Reuses the process recorded by the previous hook of this session while it still runs;
+/// walking the process tree takes about 10ms, checking one PID well under 1ms.
+fn current_claude_process(status_file: &Path) -> Option<(u32, u64)> {
+    read_claude_process(status_file)
+        .filter(|&(pid, started)| is_same_process_running(pid, started))
+        .or_else(find_claude_ancestor)
 }
 
 #[tauri::command]
@@ -806,7 +820,7 @@ fn cmd_write_status(args: &[String]) {
         );
     } else {
         // Lets the aggregate pet drop a session whose Claude process died without a SessionEnd hook
-        let claude_process = find_claude_ancestor();
+        let claude_process = current_claude_process(&status_file);
         let status = serde_json::json!({
             "state": state, "detail": detail, "tool": tool,
             "event": event, "session_id": session_id,
