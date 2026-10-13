@@ -201,6 +201,7 @@ WebView2 blocks `file://` URLs. Assets loaded via `load_asset` Tauri command →
 - **`.claude-plugin/plugin.json`**: Do NOT add `"hooks"` field — `hooks/hooks.json` is auto-discovered by Claude Code. Plugin manifest is at `claude/.claude-plugin/plugin.json`. (`vscode/plugin.json` DOES need `"hooks"` — VS Code requires explicit declaration.)
 - **Building**: Use `npx tauri build` from `pet-app/`, NOT `cargo build` from `src-tauri/`
 - **Hook blocking**: write-status must never block. No network calls, no spawning children. Write file → `process::exit(0)`
+- **Status file writes**: Always go through `write_status_file` (temp file + rename). Parallel tool calls fire concurrent hooks, and a plain `fs::write` lets readers see a half-written file. On Windows the rename reports `Remove` before `Modify(Name(To))`, so the watcher only treats a status file as closed if it is still missing after 300ms
 - **PowerShell `&`**: Waits for ALL child processes. NEVER spawn GUI from inside `& binary.exe`
 - **toolArgs type**: Must be `Option<Value>` not `Option<String>` (Copilot sends both formats)
 - **UTF-8 safety**: All `truncate()` must use `is_char_boundary()`. stdin reader uses `Vec<u8>` not `char` cast

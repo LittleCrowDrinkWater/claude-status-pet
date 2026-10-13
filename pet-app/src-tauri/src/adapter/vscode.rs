@@ -12,7 +12,7 @@
 //! - PreCompact → ignored (no status change)
 //! - No sessionEnd/errorOccurred — Stop is the session end
 //! - SubagentStart/SubagentStop supported
-use super::{basename, extract_str, md5_short, truncate, Adapter, NormalizedEvent, StdinInput};
+use super::{basename, extract_str, short_hash, truncate, Adapter, NormalizedEvent, StdinInput};
 use std::path::Path;
 
 pub struct VscodeAdapter;
@@ -33,7 +33,7 @@ impl Adapter for VscodeAdapter {
             .unwrap_or_else(|| {
                 format!(
                     "vscode-{}",
-                    md5_short(if cwd.is_empty() { "default" } else { cwd })
+                    short_hash(if cwd.is_empty() { "default" } else { cwd })
                 )
             });
 

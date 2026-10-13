@@ -16,8 +16,7 @@ static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 
 const ASSETS_REPO: &str = "moeyui1/claude-status-pet";
 
-fn init_debug(args: &[String]) {
-    let _ = args; // reserved for future use
+fn init_debug() {
     if std::env::var("PET_DEBUG").is_ok_and(|v| v == "1" || v == "true") {
         DEBUG_ENABLED.store(true, Ordering::Relaxed);
     }
@@ -66,11 +65,7 @@ struct StatusPayload {
 }
 
 fn default_status_path() -> PathBuf {
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".claude").join("pet-data").join("status.json")
+    default_pet_dir().join("status.json")
 }
 
 fn read_status(path: &Path) -> Option<StatusPayload> {
@@ -120,15 +115,13 @@ struct SessionInfo {
     alive: Option<bool>,
 }
 
-fn read_claude_process_alive(path: &Path) -> Option<bool> {
-    let (pid, started) = read_claude_process(path)?;
-    Some(is_same_process_running(pid, started))
-}
-
 /// The Claude process PID and creation time recorded in a status file.
 fn read_claude_process(path: &Path) -> Option<(u32, u64)> {
-    let content = fs::read_to_string(path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    parse_claude_process(&fs::read_to_string(path).ok()?)
+}
+
+fn parse_claude_process(content: &str) -> Option<(u32, u64)> {
+    let v: serde_json::Value = serde_json::from_str(content).ok()?;
     let pid = u32::try_from(v["claude_pid"].as_u64()?).ok()?;
     let started = v["claude_started"].as_u64()?;
     Some((pid, started))
@@ -377,12 +370,14 @@ fn collect_sessions(skip_locked: bool) -> Vec<SessionInfo> {
                         .as_millis() as u64
                 })
                 .unwrap_or(0);
-            let (sname, state, detail) = if let Some(s) = read_status(&status_path) {
+            let content = fs::read_to_string(&status_path).unwrap_or_default();
+            let (sname, state, detail) = if let Some(s) = parse_status(&content) {
                 (s.session_name, s.state, s.detail)
             } else {
                 (String::new(), "idle".to_string(), String::new())
             };
-            let alive = read_claude_process_alive(&status_path);
+            let alive = parse_claude_process(&content)
+                .map(|(pid, started)| is_same_process_running(pid, started));
             sessions.push(SessionInfo {
                 session_id: sid,
                 session_name: sname,
@@ -465,6 +460,14 @@ async fn download_dlc(
         .map_err(|e| e.to_string())?
 }
 
+/// A relative path made only of plain names, so joining it cannot leave the base directory.
+fn is_plain_relative_path(path: &str) -> bool {
+    !path.is_empty()
+        && Path::new(path)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
 fn download_dlc_blocking(dir: &Path, dlc_name: &str) -> Result<bool, String> {
     if !is_safe_session_id(dlc_name) {
         return Err("Invalid DLC name".to_string());
@@ -484,10 +487,6 @@ fn download_dlc_blocking(dir: &Path, dlc_name: &str) -> Result<bool, String> {
     let dlc_dir = dir.join(dlc_name);
     fs::create_dir_all(&dlc_dir).map_err(|e| format!("Failed to create DLC directory: {}", e))?;
 
-    // Download each file (validate paths stay within assets dir)
-    let dir_canonical = dir
-        .canonicalize()
-        .map_err(|e| format!("Invalid assets dir: {}", e))?;
     let mut failed = Vec::new();
     for item in downloads {
         let path = item["path"].as_str().unwrap_or("");
@@ -495,18 +494,14 @@ fn download_dlc_blocking(dir: &Path, dlc_name: &str) -> Result<bool, String> {
         if path.is_empty() || url.is_empty() {
             continue;
         }
-        // Path traversal prevention: ensure dest stays within assets dir
+        // Checked before creating any directory, so a bad path leaves nothing behind
+        if !is_plain_relative_path(path) {
+            return Err(format!("Path traversal blocked: {}", path));
+        }
         let dest = dir.join(path);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create directory for {}: {}", path, e))?;
-        }
-        let dest_parent = dest
-            .parent()
-            .and_then(|p| p.canonicalize().ok())
-            .ok_or_else(|| format!("Invalid path: {}", path))?;
-        if !dest_parent.starts_with(&dir_canonical) {
-            return Err(format!("Path traversal blocked: {}", path));
         }
         match download_file(url, &dest) {
             Ok(_) => {}
@@ -718,7 +713,7 @@ fn scan_packs_in_dir(dir: &PathBuf, group: &str, packs: &mut Vec<CharacterPack>)
 /// CLI: write-status subcommand
 /// Reads event info from CLI args or stdin (via adapter), writes status JSON, exits.
 fn cmd_write_status(args: &[String]) {
-    init_debug(args);
+    init_debug();
     let pet_dir = default_pet_dir();
     let _ = fs::create_dir_all(&pet_dir);
     let log_path = pet_dir.join("pet-debug.log"); // dummy file path for debug_log
@@ -895,8 +890,14 @@ fn cleanup_stale_status(pet_dir: &PathBuf) {
     }
 }
 
+/// Session IDs and DLC names become file names; anything beyond these characters could
+/// reach another directory or, through a colon on NTFS, an alternate data stream.
 fn is_safe_session_id(id: &str) -> bool {
-    !id.is_empty() && !id.contains('/') && !id.contains('\\') && !id.contains("..")
+    !id.is_empty()
+        && !id.contains("..")
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 fn write_lock_file(lock_path: &PathBuf) {
@@ -976,20 +977,25 @@ struct FileTime {
     high: u32,
 }
 
-/// Creation time of a running process, as a raw FILETIME value.
+/// Creation time of a still running process, as a raw FILETIME value.
+/// An exited process keeps answering GetProcessTimes while any handle to it is open,
+/// so its exit code is checked through the same handle.
 #[cfg(windows)]
-fn process_start_time(pid: u32) -> Option<u64> {
+fn running_process_start_time(pid: u32) -> Option<u64> {
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const STILL_ACTIVE: u32 = 259;
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if handle.is_null() {
             return None;
         }
+        let mut exit_code: u32 = 0;
+        let running = GetExitCodeProcess(handle, &mut exit_code) != 0 && exit_code == STILL_ACTIVE;
         let mut times = [FileTime::default(); 4];
         let [creation, exit, kernel, user] = &mut times;
-        let ok = GetProcessTimes(handle, creation, exit, kernel, user);
+        let has_times = GetProcessTimes(handle, creation, exit, kernel, user) != 0;
         CloseHandle(handle);
-        (ok != 0).then(|| ((times[0].high as u64) << 32) | times[0].low as u64)
+        (running && has_times).then(|| ((times[0].high as u64) << 32) | times[0].low as u64)
     }
 }
 
@@ -1025,7 +1031,7 @@ fn find_claude_ancestor() -> Option<(u32, u64)> {
     for _ in 0..MAX_DEPTH {
         let parent = processes.get(&pid)?.0;
         if processes.get(&parent)?.1.eq_ignore_ascii_case("claude.exe") {
-            return process_start_time(parent).map(|started| (parent, started));
+            return running_process_start_time(parent).map(|started| (parent, started));
         }
         pid = parent;
     }
@@ -1042,7 +1048,7 @@ fn find_claude_ancestor() -> Option<(u32, u64)> {
 /// alive through an unrelated process that took over its PID.
 #[cfg(windows)]
 fn is_same_process_running(pid: u32, started: u64) -> bool {
-    process_start_time(pid) == Some(started) && is_process_running(pid)
+    running_process_start_time(pid) == Some(started)
 }
 
 #[cfg(not(windows))]
@@ -1062,10 +1068,11 @@ unsafe extern "C" {
     fn libc_kill(pid: i32, sig: i32) -> i32;
 }
 
-fn download_file(url: &str, dest: &PathBuf) -> Result<(), String> {
+/// GETs a URL and returns its non-empty body.
+fn fetch_bytes(url: &str, timeout_secs: u64) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
         .build()
         .new_agent();
     let resp = agent.get(url).call().map_err(|e| e.to_string())?;
@@ -1081,35 +1088,21 @@ fn download_file(url: &str, dest: &PathBuf) -> Result<(), String> {
     if bytes.is_empty() {
         return Err("Empty response".into());
     }
+    Ok(bytes)
+}
+
+fn download_file(url: &str, dest: &Path) -> Result<(), String> {
+    let bytes = fetch_bytes(url, 30)?;
     fs::write(dest, &bytes).map_err(|e| e.to_string())
 }
 
-fn download_assets_blocking(assets_dir: &PathBuf) -> Result<(), String> {
+fn download_assets_blocking(assets_dir: &Path) -> Result<(), String> {
     use std::io::Read;
     let url = format!(
         "https://github.com/{}/releases/latest/download/pet-assets.zip",
         ASSETS_REPO
     );
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(60)))
-        .build()
-        .new_agent();
-    let resp = agent
-        .get(&url)
-        .call()
-        .map_err(|e| format!("Download failed: {}", e))?;
-    let status = resp.status();
-    if status != 200 {
-        return Err(format!("Download failed: HTTP {}", status));
-    }
-    let mut zip_bytes: Vec<u8> = Vec::new();
-    resp.into_body()
-        .into_reader()
-        .read_to_end(&mut zip_bytes)
-        .map_err(|e| format!("Download failed: {}", e))?;
-    if zip_bytes.is_empty() {
-        return Err("Download failed: empty response".into());
-    }
+    let zip_bytes = fetch_bytes(&url, 60).map_err(|e| format!("Download failed: {}", e))?;
 
     // Extract zip to assets_dir
     fs::create_dir_all(assets_dir)
@@ -1316,21 +1309,13 @@ pub fn run() {
         std::process::exit(0); // Force exit — don't wait for stdin reader thread
     }
 
-    if std::env::var("PET_DEBUG").is_ok_and(|v| v == "1" || v == "true") {
-        DEBUG_ENABLED.store(true, Ordering::Relaxed);
-    }
+    init_debug();
 
     let demo_mode = args.iter().any(|a| a == "--demo");
     let aggregate_mode = args.iter().any(|a| a == "--all");
 
-    let explicit_status = args
-        .windows(2)
-        .find(|w| w[0] == "--status-file")
-        .map(|w| PathBuf::from(&w[1]));
-    let explicit_session = args
-        .windows(2)
-        .find(|w| w[0] == "--session-id")
-        .map(|w| w[1].clone());
+    let explicit_status = get_arg(&args, "--status-file").map(PathBuf::from);
+    let explicit_session = get_arg(&args, "--session-id");
 
     // Determine if we have an explicit session or need session selection
     let (initial_status_path, initial_session_id, initial_lock) = if let Some(sf) = &explicit_status
@@ -1363,11 +1348,11 @@ pub fn run() {
 
     let needs_session_select = explicit_status.is_none() && !demo_mode && !aggregate_mode;
 
-    let assets_dir: Option<PathBuf> = args
-        .windows(2)
-        .find(|w| w[0] == "--assets-dir")
-        .map(|w| PathBuf::from(&w[1]))
-        .or_else(|| Some(default_pet_dir().join("assets")));
+    let assets_dir: Option<PathBuf> = Some(
+        get_arg(&args, "--assets-dir")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| default_pet_dir().join("assets")),
+    );
 
     if let Some(parent) = initial_status_path.parent() {
         let _ = fs::create_dir_all(parent);

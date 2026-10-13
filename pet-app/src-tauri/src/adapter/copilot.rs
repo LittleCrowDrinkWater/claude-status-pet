@@ -19,7 +19,7 @@
 //! - notification (permission_prompt / elicitation_dialog): mapped to "waiting"
 //! - subagentStart / subagentStop: mapped to "delegating" / "thinking"
 //! - sessionEnd: writes "closed" (matches Claude — does NOT delete the status file)
-use super::{basename, get_str, md5_short, truncate, Adapter, NormalizedEvent, StdinInput};
+use super::{basename, get_str, short_hash, truncate, Adapter, NormalizedEvent, StdinInput};
 use std::path::Path;
 
 pub struct CopilotAdapter;
@@ -53,7 +53,7 @@ impl Adapter for CopilotAdapter {
             .unwrap_or_else(|| {
                 format!(
                     "copilot-{}",
-                    md5_short(if cwd.is_empty() { "default" } else { cwd })
+                    short_hash(if cwd.is_empty() { "default" } else { cwd })
                 )
             });
         let session_name = format!(

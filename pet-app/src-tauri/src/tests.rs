@@ -587,6 +587,43 @@ fn test_format_utc_timestamp() {
     );
 }
 
+#[test]
+fn test_safe_session_id() {
+    assert!(crate::is_safe_session_id(
+        "0564de89-6cc8-4416-b3de-388292de2d3b"
+    ));
+    assert!(crate::is_safe_session_id("copilot-1f2e3d4c"));
+    assert!(crate::is_safe_session_id("fluent-emoji"));
+    assert!(!crate::is_safe_session_id(""));
+    assert!(!crate::is_safe_session_id("../escape"));
+    assert!(!crate::is_safe_session_id("a/b"));
+    assert!(!crate::is_safe_session_id("a\\b"));
+    assert!(!crate::is_safe_session_id("status:stream"));
+    assert!(!crate::is_safe_session_id("has space"));
+}
+
+#[test]
+fn test_plain_relative_path() {
+    assert!(crate::is_plain_relative_path("mona/idle.gif"));
+    assert!(!crate::is_plain_relative_path(""));
+    assert!(!crate::is_plain_relative_path("../outside.gif"));
+    assert!(!crate::is_plain_relative_path("mona/../../outside.gif"));
+    assert!(!crate::is_plain_relative_path("./mona/idle.gif"));
+    assert!(!crate::is_plain_relative_path("/etc/passwd"));
+    if cfg!(windows) {
+        assert!(!crate::is_plain_relative_path(r"C:\Windows\win.ini"));
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn test_same_process_requires_matching_start_time() {
+    let pid = std::process::id();
+    let started = crate::running_process_start_time(pid).expect("current process is running");
+    assert!(crate::is_same_process_running(pid, started));
+    assert!(!crate::is_same_process_running(pid, started + 1));
+}
+
 // ── Helper ──
 
 fn make_stdin(

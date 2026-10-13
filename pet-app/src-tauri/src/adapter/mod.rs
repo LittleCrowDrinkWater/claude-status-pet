@@ -87,8 +87,8 @@ pub fn truncate(s: &str, max: usize) -> &str {
     &s[..idx]
 }
 
-/// Simple hash (first 8 hex chars) for session ID generation from cwd
-pub fn md5_short(input: &str) -> String {
+/// Stable non-cryptographic hash as hex (8 to 16 chars), the fallback session ID from cwd
+pub fn short_hash(input: &str) -> String {
     let mut hash: u64 = 0;
     for (i, b) in input.bytes().enumerate() {
         hash = hash
