@@ -190,6 +190,10 @@ let currentImgSrc = '';
 let requestedImgSrc = '';
 let bubbleTimeout = null;
 let stateAnimTimeout = null;
+// Length of the pop-in keyframes (.anim-appear in style.css)
+const APPEAR_MS = 400;
+let appearUntil = 0;
+let spriteKey = '';
 let asciiFrame = 0;
 let asciiInterval = null;
 let menuPage = 'main';
@@ -358,7 +362,8 @@ function setImage(src) {
 imgEl.addEventListener('error', () => {
   if (imgEl.src && imgEl.src !== window.location.href) {
     const name = decodeURIComponent(imgEl.src.split('/').pop().split('?')[0]);
-    // Switch to ASCII 404 display
+    // Switch to ASCII 404 display; the next status picks a sprite again
+    spriteKey = '';
     showAscii();
     asciiPre.textContent = [
       '            ',
@@ -404,18 +409,37 @@ function spokenText(status) {
   return '';
 }
 
-function updateStatus(status) {
-  const state = status.state || 'idle';
-  const detail = spokenText(status) || status.detail || '';
-  const sessionName = status.session_name || '';
+// Mirrors session_meta::state_group in the backend
+function stateGroup(state) {
+  return WORKING_STATES.has(state) ? 'working' : state;
+}
 
-  if (state === 'closed' && window.__TAURI__) {
-    window.__TAURI__.window.getCurrentWindow().close();
-    return;
+// Pops in only when the state group changes. Tools switch the busy state several times a
+// second, and replaying the pop-in each time kept the pet shrinking and bouncing.
+function playStateAnimation(state) {
+  if (state === currentState) return;
+  const groupChanged = stateGroup(state) !== stateGroup(currentState);
+  currentState = state;
+  // A quick second change would otherwise let an older timer apply the previous state's animation
+  clearTimeout(stateAnimTimeout);
+  if (groupChanged) {
+    container.className = 'anim-appear';
+    appearUntil = Date.now() + APPEAR_MS;
   }
+  const appearLeft = appearUntil - Date.now();
+  if (appearLeft <= 0) {
+    container.className = `anim-${state}`;
+  } else {
+    stateAnimTimeout = setTimeout(() => { container.className = `anim-${state}`; }, appearLeft);
+  }
+}
 
-  if (sessionName) renderSessionName(sessionName, status.session_color, status.session_tooltip);
-
+// Keeps the sprite while only the detail changes; picking a new random one on every tool call
+// swapped the picture each time the pet read another file.
+function renderCharacter(state) {
+  const key = mode + '|' + state;
+  if (key === spriteKey) return;
+  spriteKey = key;
   if (mode === 'ferris') {
     showImage();
     const sprites = FERRIS_SVG_MAP[state] || FERRIS_SVG_MAP.idle;
@@ -432,14 +456,23 @@ function updateStatus(status) {
       startAsciiAnimation(species[stateKey] || species.idle);
     }
   }
+}
 
-  if (state !== currentState) {
-    container.className = 'anim-appear';
-    // A quick second change would otherwise let this older timer apply the previous state's animation
-    clearTimeout(stateAnimTimeout);
-    stateAnimTimeout = setTimeout(() => { container.className = `anim-${state}`; }, 400);
-    currentState = state;
+function updateStatus(status) {
+  const state = status.state || 'idle';
+  const detail = spokenText(status) || status.detail || '';
+  const sessionName = status.session_name || '';
+
+  if (state === 'closed' && window.__TAURI__) {
+    window.__TAURI__.window.getCurrentWindow().close();
+    return;
   }
+
+  if (sessionName) renderSessionName(sessionName, status.session_color, status.session_tooltip);
+
+  // Before the character: the ASCII frame speed is read from currentState
+  playStateAnimation(state);
+  renderCharacter(state);
 
   stateLabel.textContent = state;
   bubble.classList.toggle('thought', WORKING_STATES.has(state));
@@ -758,6 +791,7 @@ async function selectChar(newMode) {
   applyMotion();
   currentImgSrc = '';
   imgEl.src = '';
+  spriteKey = '';
 
   // Show the character immediately with whatever is available
   updateStatus({ state: currentState, detail: statusText.textContent });
@@ -1219,6 +1253,8 @@ async function preloadAssets() {
   }
 
   applyConfig();
+  // The sprite maps were still the bundled defaults when the first status arrived
+  spriteKey = '';
   if (aggregateMode) {
     // Character packs finished loading after the first aggregate render; draw again with them
     rerenderAggregate();
