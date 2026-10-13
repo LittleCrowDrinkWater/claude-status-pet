@@ -188,6 +188,7 @@ let currentState = 'idle';
 let currentImgSrc = '';
 let requestedImgSrc = '';
 let bubbleTimeout = null;
+let stateAnimTimeout = null;
 let asciiFrame = 0;
 let asciiInterval = null;
 let menuPage = 'main';
@@ -424,7 +425,9 @@ function updateStatus(status) {
 
   if (state !== currentState) {
     container.className = 'anim-appear';
-    setTimeout(() => { container.className = `anim-${state}`; }, 400);
+    // A quick second change would otherwise let this older timer apply the previous state's animation
+    clearTimeout(stateAnimTimeout);
+    stateAnimTimeout = setTimeout(() => { container.className = `anim-${state}`; }, 400);
     currentState = state;
   }
 
