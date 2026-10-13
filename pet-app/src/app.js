@@ -186,6 +186,7 @@ let petScale = parseFloat(localStorage.getItem('petScale') || '1');
 let petMotion = localStorage.getItem('petMotion') !== 'off';
 let currentState = 'idle';
 let currentImgSrc = '';
+let requestedImgSrc = '';
 let bubbleTimeout = null;
 let asciiFrame = 0;
 let asciiInterval = null;
@@ -332,15 +333,17 @@ function showAscii() {
 }
 
 function setImage(src) {
-  const resolved = assetUrl(src);
-  if (resolved === currentImgSrc) return;
-  // If asset not yet cached, try loading it on-demand (fixes race with preload)
-  if (resolved === src && hasExternalAssets && window.__TAURI__) {
-    loadAsset(src).then(url => {
-      if (url !== src) setImage(src); // retry with cached version
+  requestedImgSrc = src;
+  // Not preloaded yet: load it, then show it unless another state asked for a different image meanwhile
+  if (!assetCache[src] && !missingAssets.has(src) && hasExternalAssets && window.__TAURI__) {
+    loadAsset(src).then(() => {
+      if (requestedImgSrc === src) setImage(src);
     });
     return;
   }
+  // A missing asset falls back to the copy bundled with the frontend (Ferris ships in ferris/)
+  const resolved = assetCache[src] || src;
+  if (resolved === currentImgSrc) return;
   imgEl.style.opacity = '0';
   setTimeout(() => {
     imgEl.src = resolved;
@@ -626,6 +629,7 @@ function buildConfigPage() {
     bubble.classList.remove('hidden');
     try {
       await window.__TAURI__.core.invoke('update_assets');
+      missingAssets.clear();
       // Refresh DLC list after update
       try {
         availableDlcs = await window.__TAURI__.core.invoke('list_available_dlcs');
@@ -693,6 +697,7 @@ async function downloadAndSelectDlc(dlcName) {
 
   try {
     await window.__TAURI__.core.invoke('download_dlc', { dlcName });
+    missingAssets.clear();
     dlcInstalledCache[dlcName] = true;
     // Re-check assets dir (download_dlc may have created it)
     try { hasExternalAssets = !!(await window.__TAURI__.core.invoke('get_assets_dir')); } catch(e) {}
@@ -965,6 +970,7 @@ if (window.__TAURI__) {
 // ── Asset loading ──
 let hasExternalAssets = false;
 const assetCache = {};
+const missingAssets = new Set();
 
 async function initAssets() {
   if (window.__TAURI__) {
@@ -985,6 +991,7 @@ async function initAssets() {
         bubble.classList.remove('hidden');
         try {
           await window.__TAURI__.core.invoke('update_assets');
+          missingAssets.clear();
           statusText.textContent = 'Assets ready!';
           clearTimeout(bubbleTimeout);
           bubbleTimeout = setTimeout(() => bubble.classList.add('hidden'), 3000);
@@ -1004,23 +1011,16 @@ async function initAssets() {
   }
 }
 
+// Caches the data URL, or remembers the miss so status updates stop asking the backend again
 async function loadAsset(path) {
-  if (!hasExternalAssets || !window.__TAURI__) return path;
-  if (assetCache[path]) return assetCache[path];
+  if (!hasExternalAssets || !window.__TAURI__) return;
+  if (assetCache[path] || missingAssets.has(path)) return;
+  let dataUrl = null;
   try {
-    // load_asset checks assets/ then characters/ dirs
-    const dataUrl = await window.__TAURI__.core.invoke('load_asset', { path });
-    if (dataUrl) { assetCache[path] = dataUrl; return dataUrl; }
+    dataUrl = await window.__TAURI__.core.invoke('load_asset', { path });
   } catch(e) {}
-  try {
-    const dataUrl = await window.__TAURI__.core.invoke('load_custom_asset', { path });
-    if (dataUrl) { assetCache[path] = dataUrl; return dataUrl; }
-  } catch(e) {}
-  return path;
-}
-
-function assetUrl(path) {
-  return assetCache[path] || path;
+  if (dataUrl) assetCache[path] = dataUrl;
+  else missingAssets.add(path);
 }
 
 // Preload only the active mode's assets
@@ -1080,6 +1080,7 @@ async function preloadAssets() {
     bubble.classList.remove('hidden');
     try {
       await window.__TAURI__.core.invoke('download_dlc', { dlcName: mode });
+      missingAssets.clear();
       dlcInstalledCache[mode] = true;
       // Re-check assets dir (download_dlc may have created it)
       try { hasExternalAssets = !!(await window.__TAURI__.core.invoke('get_assets_dir')); } catch(e) {}

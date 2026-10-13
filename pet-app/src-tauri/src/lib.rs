@@ -525,20 +525,22 @@ fn download_dlc_blocking(dir: &Path, dlc_name: &str) -> Result<bool, String> {
     Ok(true)
 }
 
+/// Reads an image from the assets dir, falling back to the custom characters dir, as a data URL.
 #[tauri::command]
 fn load_asset(assets_dir: tauri::State<'_, Option<PathBuf>>, path: String) -> Option<String> {
     use base64::Engine;
     let dir = assets_dir.inner().as_ref()?;
     let file_path = dir.join(&path);
+    let file_path = if file_path.exists() {
+        file_path
+    } else {
+        dir.parent()?.join("characters").join(&path)
+    };
     let bytes = fs::read(&file_path).ok()?;
-    let ext = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("png");
-    let mime = match ext {
-        "svg" => "image/svg+xml",
-        "gif" => "image/gif",
-        "png" => "image/png",
+    let mime = match file_path.extension().and_then(|e| e.to_str()) {
+        Some("svg") => "image/svg+xml",
+        Some("gif") => "image/gif",
+        Some("png") => "image/png",
         _ => "application/octet-stream",
     };
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -555,35 +557,6 @@ fn load_text_asset(assets_dir: tauri::State<'_, Option<PathBuf>>, path: String) 
     }
     let custom_path = dir.parent()?.join("characters").join(&path);
     fs::read_to_string(&custom_path).ok()
-}
-
-#[tauri::command]
-fn load_custom_asset(
-    assets_dir: tauri::State<'_, Option<PathBuf>>,
-    path: String,
-) -> Option<String> {
-    use base64::Engine;
-    let dir = assets_dir.inner().as_ref()?;
-    // Try assets dir, then custom characters dir
-    let file_path = dir.join(&path);
-    let file_path = if file_path.exists() {
-        file_path
-    } else {
-        dir.parent()?.join("characters").join(&path)
-    };
-    let bytes = fs::read(&file_path).ok()?;
-    let ext = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("png");
-    let mime = match ext {
-        "svg" => "image/svg+xml",
-        "gif" => "image/gif",
-        "png" => "image/png",
-        _ => "application/octet-stream",
-    };
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    Some(format!("data:{};base64,{}", mime, b64))
 }
 
 #[derive(Clone, Serialize)]
@@ -1407,7 +1380,6 @@ pub fn run() {
             get_assets_dir,
             load_asset,
             load_text_asset,
-            load_custom_asset,
             is_dlc_installed,
             download_dlc,
             list_available_dlcs,
