@@ -5,8 +5,7 @@
 /// - Tool names: PascalCase (Edit, Read, Bash, Grep, etc.)
 /// - Tool input: snake_case keys (file_path, command, etc.)
 /// - Session ID: provided in JSON
-
-use super::{Adapter, NormalizedEvent, StdinInput, basename, truncate, extract_str};
+use super::{basename, extract_str, truncate, Adapter, NormalizedEvent, StdinInput};
 use std::path::Path;
 
 pub struct ClaudeAdapter;
@@ -24,14 +23,16 @@ impl Adapter for ClaudeAdapter {
             .unwrap_or(session_id);
 
         let (event, tool, detail) = match hook {
-            "UserPromptSubmit" => {
-                ("prompt".into(), String::new(), "Processing your prompt...".into())
-            }
+            "UserPromptSubmit" => (
+                "prompt".into(),
+                String::new(),
+                "Processing your prompt...".into(),
+            ),
             "PreToolUse" => {
                 let file = extract_file(tool_input);
                 let command = extract_str(tool_input, "command");
-                let pattern = extract_str(tool_input, "pattern")
-                    .or_else(|| extract_str(tool_input, "query"));
+                let pattern =
+                    extract_str(tool_input, "pattern").or_else(|| extract_str(tool_input, "query"));
                 let description = extract_str(tool_input, "description")
                     .or_else(|| extract_str(tool_input, "skill"));
 
@@ -47,8 +48,12 @@ impl Adapter for ClaudeAdapter {
                     match crate::status_map::tool_to_state(tool_name) {
                         "editing" => format!("Editing {}", basename(&file.unwrap_or_default())),
                         "reading" => format!("Reading {}", basename(&file.unwrap_or_default())),
-                        "searching" => format!("Searching: {}", truncate(&pattern.unwrap_or_default(), 30)),
-                        "running" => format!("Running: {}", truncate(&command.unwrap_or_default(), 40)),
+                        "searching" => {
+                            format!("Searching: {}", truncate(&pattern.unwrap_or_default(), 30))
+                        }
+                        "running" => {
+                            format!("Running: {}", truncate(&command.unwrap_or_default(), 40))
+                        }
                         "delegating" => description.unwrap_or_else(|| "Delegating...".into()),
                         _ => format!("Using {}", tool_name),
                     }
@@ -56,32 +61,32 @@ impl Adapter for ClaudeAdapter {
 
                 ("tool".into(), tool_name.to_string(), detail)
             }
-            "SubagentStart" => {
-                ("subagent".into(), "agent".into(), "Spawning sub-agent...".into())
-            }
+            "SubagentStart" => (
+                "subagent".into(),
+                "agent".into(),
+                "Spawning sub-agent...".into(),
+            ),
             "SubagentStop" => {
                 // Not "prompt": write-status only resumes thinking if the session is still delegating
-                ("subagent_done".into(), String::new(), "Sub-agent finished".into())
+                (
+                    "subagent_done".into(),
+                    String::new(),
+                    "Sub-agent finished".into(),
+                )
             }
-            "Notification" => {
-                ("wait".into(), String::new(), "Waiting for approval...".into())
-            }
-            "Stop" => {
-                ("done".into(), String::new(), "Waiting for input".into())
-            }
-            "StopFailure" => {
-                ("error".into(), String::new(), "Something went wrong".into())
-            }
-            "SessionEnd" => {
-                ("closed".into(), String::new(), "Session ended".into())
-            }
+            "Notification" => (
+                "wait".into(),
+                String::new(),
+                "Waiting for approval...".into(),
+            ),
+            "Stop" => ("done".into(), String::new(), "Waiting for input".into()),
+            "StopFailure" => ("error".into(), String::new(), "Something went wrong".into()),
+            "SessionEnd" => ("closed".into(), String::new(), "Session ended".into()),
             "SessionStart" => {
                 // Write initial idle status
                 ("done".into(), String::new(), "Session started".into())
             }
-            _ => {
-                ("prompt".into(), String::new(), format!("{}", hook))
-            }
+            _ => ("prompt".into(), String::new(), format!("{}", hook)),
         };
 
         Some(NormalizedEvent {

@@ -46,7 +46,11 @@ fn debug_log(path: &PathBuf, msg: &str) {
             format!("{:02}:{:02}:{:02}.{:03}", h, m, s, millis)
         })
         .unwrap_or_default();
-    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
         let _ = writeln!(f, "[{}] {}", timestamp, msg);
     }
 }
@@ -95,7 +99,10 @@ fn get_session_id(session_id: tauri::State<'_, Arc<Mutex<String>>>) -> String {
 
 #[tauri::command]
 fn get_assets_dir(assets_dir: tauri::State<'_, Option<PathBuf>>) -> Option<String> {
-    assets_dir.inner().as_ref().map(|p| p.to_string_lossy().to_string())
+    assets_dir
+        .inner()
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -142,7 +149,11 @@ fn is_status_file_name(name: &str) -> bool {
 }
 
 /// Watches `dir` (non-recursive) on a background thread and passes every event to `on_event`.
-fn spawn_dir_watcher(dir: PathBuf, log_path: PathBuf, mut on_event: impl FnMut(notify::Event) + Send + 'static) {
+fn spawn_dir_watcher(
+    dir: PathBuf,
+    log_path: PathBuf,
+    mut on_event: impl FnMut(notify::Event) + Send + 'static,
+) {
     std::thread::spawn(move || {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut watcher = match notify::recommended_watcher(tx) {
@@ -176,7 +187,10 @@ fn spawn_status_file_watcher(status_file: PathBuf, handle: tauri::AppHandle) {
         return;
     };
     if let Some(status) = read_status(&status_file) {
-        debug_log(&status_file, &format!("Initial status: state={}", status.state));
+        debug_log(
+            &status_file,
+            &format!("Initial status: state={}", status.state),
+        );
         let _ = handle.emit("status-update", status);
     }
     let log_path = status_file.clone();
@@ -184,15 +198,24 @@ fn spawn_status_file_watcher(status_file: PathBuf, handle: tauri::AppHandle) {
         if !event.paths.iter().any(|p| *p == status_file) {
             return;
         }
-        debug_log(&log_path, &format!("Event: {:?}, paths: {:?}", event.kind, event.paths));
+        debug_log(
+            &log_path,
+            &format!("Event: {:?}, paths: {:?}", event.kind, event.paths),
+        );
         match event.kind {
             EventKind::Modify(_) | EventKind::Create(_) => {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 if let Some(status) = read_status(&status_file) {
-                    debug_log(&log_path, &format!("Emit: state={}, detail={}", status.state, status.detail));
+                    debug_log(
+                        &log_path,
+                        &format!("Emit: state={}, detail={}", status.state, status.detail),
+                    );
                     let _ = handle.emit("status-update", status);
                 } else {
-                    debug_log(&log_path, "Read failed after Modify/Create (file may be mid-write)");
+                    debug_log(
+                        &log_path,
+                        "Read failed after Modify/Create (file may be mid-write)",
+                    );
                 }
             }
             EventKind::Remove(_) => {
@@ -200,19 +223,25 @@ fn spawn_status_file_watcher(status_file: PathBuf, handle: tauri::AppHandle) {
                 std::thread::sleep(std::time::Duration::from_millis(300));
                 if status_file.exists() {
                     if let Some(status) = read_status(&status_file) {
-                        debug_log(&log_path, &format!("Emit after spurious Remove: state={}", status.state));
+                        debug_log(
+                            &log_path,
+                            &format!("Emit after spurious Remove: state={}", status.state),
+                        );
                         let _ = handle.emit("status-update", status);
                     }
                 } else {
                     debug_log(&log_path, "File truly deleted, emitting closed state");
-                    let _ = handle.emit("status-update", StatusPayload {
-                        state: "closed".to_string(),
-                        detail: "Session ended".to_string(),
-                        tool: String::new(),
-                        event: "SessionEnd".to_string(),
-                        session_id: String::new(),
-                        session_name: String::new(),
-                    });
+                    let _ = handle.emit(
+                        "status-update",
+                        StatusPayload {
+                            state: "closed".to_string(),
+                            detail: "Session ended".to_string(),
+                            tool: String::new(),
+                            event: "SessionEnd".to_string(),
+                            session_id: String::new(),
+                            session_name: String::new(),
+                        },
+                    );
                 }
             }
             _ => debug_log(&log_path, &format!("Ignored event: {:?}", event.kind)),
@@ -226,7 +255,8 @@ fn spawn_sessions_watcher(handle: tauri::AppHandle) {
     let pet_dir = default_pet_dir();
     spawn_dir_watcher(pet_dir.clone(), pet_dir, move |event| {
         let touches_status = event.paths.iter().any(|p| {
-            p.file_name().is_some_and(|n| is_status_file_name(&n.to_string_lossy()))
+            p.file_name()
+                .is_some_and(|n| is_status_file_name(&n.to_string_lossy()))
         });
         if touches_status {
             let _ = handle.emit("sessions-changed", ());
@@ -240,7 +270,9 @@ fn spawn_sessions_watcher(handle: tauri::AppHandle) {
 #[cfg(windows)]
 fn acquire_aggregate_guard() -> Result<Option<PathBuf>, ()> {
     const ERROR_ALREADY_EXISTS: u32 = 183;
-    let name: Vec<u16> = "Local\\claude-status-pet-aggregate\0".encode_utf16().collect();
+    let name: Vec<u16> = "Local\\claude-status-pet-aggregate\0"
+        .encode_utf16()
+        .collect();
     unsafe {
         let handle = CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr());
         if handle.is_null() {
@@ -260,7 +292,11 @@ fn acquire_aggregate_guard() -> Result<Option<PathBuf>, ()> {
 fn acquire_aggregate_guard() -> Result<Option<PathBuf>, ()> {
     let lock_file = default_pet_dir().join("pet-all.lock");
     for _ in 0..2 {
-        match fs::OpenOptions::new().write(true).create_new(true).open(&lock_file) {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_file)
+        {
             Ok(mut file) => {
                 let _ = write!(file, "{}", std::process::id());
                 return Ok(Some(lock_file));
@@ -276,13 +312,20 @@ fn acquire_aggregate_guard() -> Result<Option<PathBuf>, ()> {
 
 fn collect_sessions(skip_locked: bool) -> Vec<SessionInfo> {
     let pet_dir = default_pet_dir();
-    let Ok(entries) = fs::read_dir(&pet_dir) else { return vec![] };
+    let Ok(entries) = fs::read_dir(&pet_dir) else {
+        return vec![];
+    };
     let mut sessions = Vec::new();
     for entry in entries.filter_map(|e| e.ok()) {
         let name = entry.file_name();
         let name_str = name.to_string_lossy().to_string();
         if is_status_file_name(&name_str) {
-            let sid = name_str.strip_prefix("status-").unwrap().strip_suffix(".json").unwrap().to_string();
+            let sid = name_str
+                .strip_prefix("status-")
+                .unwrap()
+                .strip_suffix(".json")
+                .unwrap()
+                .to_string();
             if skip_locked {
                 let lock_file = pet_dir.join(format!("pet-{}.lock", sid));
                 if is_lock_alive(&lock_file) {
@@ -294,9 +337,14 @@ fn collect_sessions(skip_locked: bool) -> Vec<SessionInfo> {
                 }
             }
             let status_path = entry.path();
-            let last_modified = status_path.metadata()
+            let last_modified = status_path
+                .metadata()
                 .and_then(|m| m.modified())
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64)
+                .map(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64
+                })
                 .unwrap_or(0);
             let (sname, state, detail) = if let Some(s) = read_status(&status_path) {
                 (s.session_name, s.state, s.detail)
@@ -353,7 +401,9 @@ fn is_dlc_installed(assets_dir: tauri::State<'_, Option<PathBuf>>, dlc_name: Str
     if let Some(dir) = assets_dir.inner().as_ref() {
         let dlc_dir = dir.join(&dlc_name);
         let char_json = dlc_dir.join("character.json");
-        if !char_json.exists() { return false; }
+        if !char_json.exists() {
+            return false;
+        }
         // Check if any asset files exist
         if let Ok(entries) = fs::read_dir(&dlc_dir) {
             return entries.filter_map(|e| e.ok()).any(|e| {
@@ -368,13 +418,20 @@ fn is_dlc_installed(assets_dir: tauri::State<'_, Option<PathBuf>>, dlc_name: Str
 }
 
 #[tauri::command]
-async fn download_dlc(assets_dir: tauri::State<'_, Option<PathBuf>>, dlc_name: String) -> Result<bool, String> {
-    let dir = assets_dir.inner().as_ref().ok_or("No assets directory configured")?.clone();
+async fn download_dlc(
+    assets_dir: tauri::State<'_, Option<PathBuf>>,
+    dlc_name: String,
+) -> Result<bool, String> {
+    let dir = assets_dir
+        .inner()
+        .as_ref()
+        .ok_or("No assets directory configured")?
+        .clone();
     let dlc = dlc_name.clone();
 
-    tauri::async_runtime::spawn_blocking(move || {
-        download_dlc_blocking(&dir, &dlc)
-    }).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || download_dlc_blocking(&dir, &dlc))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn download_dlc_blocking(dir: &PathBuf, dlc_name: &str) -> Result<bool, String> {
@@ -386,30 +443,35 @@ fn download_dlc_blocking(dir: &PathBuf, dlc_name: &str) -> Result<bool, String> 
     let config_path = dir.join("dlc").join(format!("{}.json", dlc_name));
     let config_str = fs::read_to_string(&config_path)
         .map_err(|e| format!("DLC config not found: {}: {}", config_path.display(), e))?;
-    let config: serde_json::Value = serde_json::from_str(&config_str)
-        .map_err(|e| format!("Invalid DLC config: {}", e))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&config_str).map_err(|e| format!("Invalid DLC config: {}", e))?;
 
-    let downloads = config["downloads"].as_array()
+    let downloads = config["downloads"]
+        .as_array()
         .ok_or_else(|| "DLC config missing 'downloads' array".to_string())?;
 
     let dlc_dir = dir.join(dlc_name);
-    fs::create_dir_all(&dlc_dir)
-        .map_err(|e| format!("Failed to create DLC directory: {}", e))?;
+    fs::create_dir_all(&dlc_dir).map_err(|e| format!("Failed to create DLC directory: {}", e))?;
 
     // Download each file (validate paths stay within assets dir)
-    let dir_canonical = dir.canonicalize().map_err(|e| format!("Invalid assets dir: {}", e))?;
+    let dir_canonical = dir
+        .canonicalize()
+        .map_err(|e| format!("Invalid assets dir: {}", e))?;
     let mut failed = Vec::new();
     for item in downloads {
         let path = item["path"].as_str().unwrap_or("");
         let url = item["url"].as_str().unwrap_or("");
-        if path.is_empty() || url.is_empty() { continue; }
+        if path.is_empty() || url.is_empty() {
+            continue;
+        }
         // Path traversal prevention: ensure dest stays within assets dir
         let dest = dir.join(path);
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create directory for {}: {}", path, e))?;
         }
-        let dest_parent = dest.parent()
+        let dest_parent = dest
+            .parent()
             .and_then(|p| p.canonicalize().ok())
             .ok_or_else(|| format!("Invalid path: {}", path))?;
         if !dest_parent.starts_with(&dir_canonical) {
@@ -437,8 +499,11 @@ fn download_dlc_blocking(dir: &PathBuf, dlc_name: &str) -> Result<bool, String> 
     if let Some(ver) = config.get("version") {
         character["version"] = ver.clone();
     }
-    fs::write(dlc_dir.join("character.json"), serde_json::to_string_pretty(&character).unwrap())
-        .map_err(|e| format!("Failed to write character.json: {}", e))?;
+    fs::write(
+        dlc_dir.join("character.json"),
+        serde_json::to_string_pretty(&character).unwrap(),
+    )
+    .map_err(|e| format!("Failed to write character.json: {}", e))?;
 
     Ok(true)
 }
@@ -449,7 +514,10 @@ fn load_asset(assets_dir: tauri::State<'_, Option<PathBuf>>, path: String) -> Op
     let dir = assets_dir.inner().as_ref()?;
     let file_path = dir.join(&path);
     let bytes = fs::read(&file_path).ok()?;
-    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("png");
+    let ext = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png");
     let mime = match ext {
         "svg" => "image/svg+xml",
         "gif" => "image/gif",
@@ -473,14 +541,24 @@ fn load_text_asset(assets_dir: tauri::State<'_, Option<PathBuf>>, path: String) 
 }
 
 #[tauri::command]
-fn load_custom_asset(assets_dir: tauri::State<'_, Option<PathBuf>>, path: String) -> Option<String> {
+fn load_custom_asset(
+    assets_dir: tauri::State<'_, Option<PathBuf>>,
+    path: String,
+) -> Option<String> {
     use base64::Engine;
     let dir = assets_dir.inner().as_ref()?;
     // Try assets dir, then custom characters dir
     let file_path = dir.join(&path);
-    let file_path = if file_path.exists() { file_path } else { dir.parent()?.join("characters").join(&path) };
+    let file_path = if file_path.exists() {
+        file_path
+    } else {
+        dir.parent()?.join("characters").join(&path)
+    };
     let bytes = fs::read(&file_path).ok()?;
-    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("png");
+    let ext = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png");
     let mime = match ext {
         "svg" => "image/svg+xml",
         "gif" => "image/gif",
@@ -511,17 +589,35 @@ fn list_available_dlcs(assets_dir: tauri::State<'_, Option<PathBuf>>) -> Vec<Dlc
 
     for dir in &dirs_to_check {
         let dlc_dir = dir.join("dlc");
-        let Ok(entries) = fs::read_dir(&dlc_dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dlc_dir) else {
+            continue;
+        };
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
-            let id = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
-            if dlcs.iter().any(|d: &DlcInfo| d.id == id) { continue; }
-            let Ok(content) = fs::read_to_string(&path) else { continue };
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) else { continue };
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let id = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if dlcs.iter().any(|d: &DlcInfo| d.id == id) {
+                continue;
+            }
+            let Ok(content) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) else {
+                continue;
+            };
             let name = v["name"].as_str().unwrap_or(&id).to_string();
             let installed = dir.join(&id).join("character.json").exists();
-            dlcs.push(DlcInfo { id, name, installed });
+            dlcs.push(DlcInfo {
+                id,
+                name,
+                installed,
+            });
         }
     }
     dlcs
@@ -547,7 +643,10 @@ fn list_character_packs(assets_dir: tauri::State<'_, Option<PathBuf>>) -> Vec<Ch
         scan_packs_in_dir(dir, "dlc", &mut packs);
 
         // Scan custom characters dir (sibling to assets)
-        let custom_dir = dir.parent().map(|p| p.join("characters")).unwrap_or_default();
+        let custom_dir = dir
+            .parent()
+            .map(|p| p.join("characters"))
+            .unwrap_or_default();
         if custom_dir.is_dir() {
             scan_packs_in_dir(&custom_dir, "custom", &mut packs);
         }
@@ -564,7 +663,11 @@ fn scan_packs_in_dir(dir: &PathBuf, group: &str, packs: &mut Vec<CharacterPack>)
                 continue;
             }
             let config_path = path.join("character.json");
-            let id = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let id = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             if let Ok(content) = fs::read_to_string(&config_path) {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
                     packs.push(CharacterPack {
@@ -580,14 +683,23 @@ fn scan_packs_in_dir(dir: &PathBuf, group: &str, packs: &mut Vec<CharacterPack>)
                 // Directory exists but no character.json — check if has image files
                 let has_images = fs::read_dir(&path).ok().map_or(false, |entries| {
                     entries.filter_map(|e| e.ok()).any(|e| {
-                        let ext = e.path().extension().and_then(|x| x.to_str()).unwrap_or("").to_lowercase();
+                        let ext = e
+                            .path()
+                            .extension()
+                            .and_then(|x| x.to_str())
+                            .unwrap_or("")
+                            .to_lowercase();
                         ext == "gif" || ext == "svg" || ext == "png"
                     })
                 });
                 if has_images {
                     packs.push(CharacterPack {
                         id,
-                        name: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                        name: path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string(),
                         char_type: "gif".to_string(),
                         group: group.to_string(),
                         installed: true,
@@ -605,10 +717,13 @@ fn cmd_write_status(args: &[String]) {
     init_debug(args);
     let pet_dir = default_pet_dir();
     let _ = fs::create_dir_all(&pet_dir);
-    let log_path = pet_dir.join("pet-debug.log");  // dummy file path for debug_log
+    let log_path = pet_dir.join("pet-debug.log"); // dummy file path for debug_log
     let t0 = std::time::Instant::now();
 
-    debug_log(&log_path, &format!("write-status START args={:?}", &args[1..]));
+    debug_log(
+        &log_path,
+        &format!("write-status START args={:?}", &args[1..]),
+    );
 
     // Parse CLI args
     let adapter_name = get_arg(args, "--adapter");
@@ -618,39 +733,57 @@ fn cmd_write_status(args: &[String]) {
     let session_id_arg = get_arg(args, "--session-id");
     let session_name_arg = get_arg(args, "--session-name");
 
-    let (event, tool, detail, session_id, session_name, launch_only) =
-        if let Some(adapter_name) = &adapter_name {
-            // Adapter mode: read stdin JSON
-            debug_log(&log_path, "reading stdin...");
-            let stdin_data = read_stdin();
-            debug_log(&log_path, &format!("stdin read in {:?}, len={}, data={}", t0.elapsed(), stdin_data.len(), &stdin_data));
-            let stdin: adapter::StdinInput = serde_json::from_str(&stdin_data).unwrap_or_default();
+    let (event, tool, detail, session_id, session_name, launch_only) = if let Some(adapter_name) =
+        &adapter_name
+    {
+        // Adapter mode: read stdin JSON
+        debug_log(&log_path, "reading stdin...");
+        let stdin_data = read_stdin();
+        debug_log(
+            &log_path,
+            &format!(
+                "stdin read in {:?}, len={}, data={}",
+                t0.elapsed(),
+                stdin_data.len(),
+                &stdin_data
+            ),
+        );
+        let stdin: adapter::StdinInput = serde_json::from_str(&stdin_data).unwrap_or_default();
 
-            if let Some(adapter) = adapter::get_adapter(adapter_name) {
-                if let Some(ev) = adapter.parse(&stdin) {
-                    (ev.event, ev.tool, ev.detail, ev.session_id, ev.session_name, ev.launch_only)
-                } else {
-                    return;
-                }
+        if let Some(adapter) = adapter::get_adapter(adapter_name) {
+            if let Some(ev) = adapter.parse(&stdin) {
+                (
+                    ev.event,
+                    ev.tool,
+                    ev.detail,
+                    ev.session_id,
+                    ev.session_name,
+                    ev.launch_only,
+                )
             } else {
-                eprintln!("Unknown adapter: {}", adapter_name);
-                std::process::exit(1);
+                return;
             }
-        } else if let Some(event) = event_arg {
-            // CLI args mode
-            let sid = session_id_arg.unwrap_or_else(|| "cli".to_string());
-            let sname = session_name_arg.unwrap_or_else(|| sid.clone());
-            let detail = if detail_arg.is_empty() {
-                status_map::tool_detail(&tool_arg, "", "")
-            } else {
-                detail_arg
-            };
-            (event, tool_arg, detail, sid, sname, false)
         } else {
-            eprintln!("Usage: claude-status-pet write-status --event <prompt|tool|done|error|offline> [--tool <name>] [--detail <text>] [--session-id <id>]");
-            eprintln!("   or: claude-status-pet write-status --adapter <claude|copilot|vscode> < stdin.json");
+            eprintln!("Unknown adapter: {}", adapter_name);
             std::process::exit(1);
+        }
+    } else if let Some(event) = event_arg {
+        // CLI args mode
+        let sid = session_id_arg.unwrap_or_else(|| "cli".to_string());
+        let sname = session_name_arg.unwrap_or_else(|| sid.clone());
+        let detail = if detail_arg.is_empty() {
+            status_map::tool_detail(&tool_arg, "", "")
+        } else {
+            detail_arg
         };
+        (event, tool_arg, detail, sid, sname, false)
+    } else {
+        eprintln!("Usage: claude-status-pet write-status --event <prompt|tool|done|error|offline> [--tool <name>] [--detail <text>] [--session-id <id>]");
+        eprintln!(
+            "   or: claude-status-pet write-status --adapter <claude|copilot|vscode> < stdin.json"
+        );
+        std::process::exit(1);
+    };
 
     // Determine state from event + tool
     let state = if event == "tool" && !tool.is_empty() {
@@ -666,7 +799,10 @@ fn cmd_write_status(args: &[String]) {
 
     let status_file = pet_dir.join(format!("status-{}.json", session_id));
 
-    debug_log(&log_path, &format!("writing state={} tool={} to {:?}", state, tool, status_file));
+    debug_log(
+        &log_path,
+        &format!("writing state={} tool={} to {:?}", state, tool, status_file),
+    );
 
     // launch_only: don't write status (e.g. Copilot sessionStart — GUI launch handled by hook script)
     if launch_only {
@@ -674,7 +810,10 @@ fn cmd_write_status(args: &[String]) {
     } else if event == "subagent_done" && !is_still_delegating(&status_file) {
         // A background sub-agent can finish after the main turn already ended (Stop wrote idle)
         // or moved on to other tools; switching to thinking then would stick with nothing running.
-        debug_log(&log_path, "subagent_done while not delegating — keeping current state");
+        debug_log(
+            &log_path,
+            "subagent_done while not delegating — keeping current state",
+        );
     } else {
         // Lets the aggregate pet drop a session whose Claude process died without a SessionEnd hook
         let claude_process = find_claude_ancestor();
@@ -692,7 +831,10 @@ fn cmd_write_status(args: &[String]) {
     println!("{}\t{}", status_file.to_string_lossy(), session_id);
 
     debug_log(&log_path, &format!("file written in {:?}", t0.elapsed()));
-    debug_log(&log_path, &format!("write-status DONE in {:?}", t0.elapsed()));
+    debug_log(
+        &log_path,
+        &format!("write-status DONE in {:?}", t0.elapsed()),
+    );
 }
 
 fn is_still_delegating(status_file: &PathBuf) -> bool {
@@ -700,7 +842,9 @@ fn is_still_delegating(status_file: &PathBuf) -> bool {
 }
 
 fn cleanup_stale_status(pet_dir: &PathBuf) {
-    let Ok(entries) = fs::read_dir(pet_dir) else { return };
+    let Ok(entries) = fs::read_dir(pet_dir) else {
+        return;
+    };
     let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(24 * 3600);
     for entry in entries.filter_map(|e| e.ok()) {
         let name = entry.file_name();
@@ -732,8 +876,12 @@ fn write_lock_file(lock_path: &PathBuf) {
 }
 
 fn is_lock_alive(lock_path: &PathBuf) -> bool {
-    let Ok(content) = fs::read_to_string(lock_path) else { return false };
-    let Ok(pid) = content.trim().parse::<u32>() else { return false };
+    let Ok(content) = fs::read_to_string(lock_path) else {
+        return false;
+    };
+    let Ok(pid) = content.trim().parse::<u32>() else {
+        return false;
+    };
     is_process_running(pid)
 }
 
@@ -758,13 +906,22 @@ unsafe extern "system" {
     fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
     fn GetExitCodeProcess(handle: *mut std::ffi::c_void, exit_code: *mut u32) -> i32;
     fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
-    fn CreateMutexW(attributes: *mut std::ffi::c_void, initial_owner: i32, name: *const u16) -> *mut std::ffi::c_void;
+    fn CreateMutexW(
+        attributes: *mut std::ffi::c_void,
+        initial_owner: i32,
+        name: *const u16,
+    ) -> *mut std::ffi::c_void;
     fn GetLastError() -> u32;
     fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> *mut std::ffi::c_void;
     fn Process32FirstW(snapshot: *mut std::ffi::c_void, entry: *mut ProcessEntry32W) -> i32;
     fn Process32NextW(snapshot: *mut std::ffi::c_void, entry: *mut ProcessEntry32W) -> i32;
-    fn GetProcessTimes(handle: *mut std::ffi::c_void, creation: *mut FileTime, exit: *mut FileTime,
-                       kernel: *mut FileTime, user: *mut FileTime) -> i32;
+    fn GetProcessTimes(
+        handle: *mut std::ffi::c_void,
+        creation: *mut FileTime,
+        exit: *mut FileTime,
+        kernel: *mut FileTime,
+        user: *mut FileTime,
+    ) -> i32;
 }
 
 /// PROCESSENTRY32W from tlhelp32.h
@@ -814,7 +971,8 @@ fn process_start_time(pid: u32) -> Option<u64> {
 fn find_claude_ancestor() -> Option<(u32, u64)> {
     const TH32CS_SNAPPROCESS: u32 = 0x2;
     const MAX_DEPTH: usize = 8;
-    let mut processes: std::collections::HashMap<u32, (u32, String)> = std::collections::HashMap::new();
+    let mut processes: std::collections::HashMap<u32, (u32, String)> =
+        std::collections::HashMap::new();
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot.is_null() || snapshot as isize == -1 {
@@ -824,7 +982,11 @@ fn find_claude_ancestor() -> Option<(u32, u64)> {
         entry.size = std::mem::size_of::<ProcessEntry32W>() as u32;
         let mut has_entry = Process32FirstW(snapshot, &mut entry) != 0;
         while has_entry {
-            let name_len = entry.exe_file.iter().position(|&c| c == 0).unwrap_or(entry.exe_file.len());
+            let name_len = entry
+                .exe_file
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(entry.exe_file.len());
             let name = String::from_utf16_lossy(&entry.exe_file[..name_len]);
             processes.insert(entry.process_id, (entry.parent_process_id, name));
             has_entry = Process32NextW(snapshot, &mut entry) != 0;
@@ -884,7 +1046,10 @@ fn download_file(url: &str, dest: &PathBuf) -> Result<(), String> {
         return Err(format!("HTTP {}", status));
     }
     let mut bytes: Vec<u8> = Vec::new();
-    resp.into_body().into_reader().read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    resp.into_body()
+        .into_reader()
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
     if bytes.is_empty() {
         return Err("Empty response".into());
     }
@@ -893,18 +1058,26 @@ fn download_file(url: &str, dest: &PathBuf) -> Result<(), String> {
 
 fn download_assets_blocking(assets_dir: &PathBuf) -> Result<(), String> {
     use std::io::Read;
-    let url = format!("https://github.com/{}/releases/latest/download/pet-assets.zip", ASSETS_REPO);
+    let url = format!(
+        "https://github.com/{}/releases/latest/download/pet-assets.zip",
+        ASSETS_REPO
+    );
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(60)))
         .build()
         .new_agent();
-    let resp = agent.get(&url).call().map_err(|e| format!("Download failed: {}", e))?;
+    let resp = agent
+        .get(&url)
+        .call()
+        .map_err(|e| format!("Download failed: {}", e))?;
     let status = resp.status();
     if status != 200 {
         return Err(format!("Download failed: HTTP {}", status));
     }
     let mut zip_bytes: Vec<u8> = Vec::new();
-    resp.into_body().into_reader().read_to_end(&mut zip_bytes)
+    resp.into_body()
+        .into_reader()
+        .read_to_end(&mut zip_bytes)
         .map_err(|e| format!("Download failed: {}", e))?;
     if zip_bytes.is_empty() {
         return Err("Download failed: empty response".into());
@@ -915,16 +1088,21 @@ fn download_assets_blocking(assets_dir: &PathBuf) -> Result<(), String> {
         .map_err(|e| format!("Failed to create assets directory: {}", e))?;
 
     let cursor = std::io::Cursor::new(&zip_bytes);
-    let mut archive = zip::ZipArchive::new(cursor)
-        .map_err(|e| format!("Invalid zip archive: {}", e))?;
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| format!("Invalid zip archive: {}", e))?;
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i)
+        let mut file = archive
+            .by_index(i)
             .map_err(|e| format!("Zip read error: {}", e))?;
-        let Some(enclosed_name) = file.enclosed_name() else { continue };
+        let Some(enclosed_name) = file.enclosed_name() else {
+            continue;
+        };
         let dest = assets_dir.join(enclosed_name);
         // Path traversal prevention
-        if !dest.starts_with(assets_dir) { continue; }
+        if !dest.starts_with(assets_dir) {
+            continue;
+        }
         if file.is_dir() {
             let _ = fs::create_dir_all(&dest);
         } else {
@@ -932,7 +1110,8 @@ fn download_assets_blocking(assets_dir: &PathBuf) -> Result<(), String> {
                 let _ = fs::create_dir_all(parent);
             }
             let mut buf = Vec::new();
-            file.read_to_end(&mut buf).map_err(|e| format!("Zip extract error: {}", e))?;
+            file.read_to_end(&mut buf)
+                .map_err(|e| format!("Zip extract error: {}", e))?;
             fs::write(&dest, &buf).map_err(|e| format!("Write error: {}", e))?;
         }
     }
@@ -942,14 +1121,30 @@ fn download_assets_blocking(assets_dir: &PathBuf) -> Result<(), String> {
     if let Ok(entries) = fs::read_dir(&dlc_config_dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
-            let dlc_id = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let dlc_id = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             let char_json = assets_dir.join(&dlc_id).join("character.json");
-            if !char_json.exists() { continue; }
-            let Ok(cfg_str) = fs::read_to_string(&path) else { continue };
-            let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&cfg_str) else { continue };
-            let Ok(inst_str) = fs::read_to_string(&char_json) else { continue };
-            let Ok(inst) = serde_json::from_str::<serde_json::Value>(&inst_str) else { continue };
+            if !char_json.exists() {
+                continue;
+            }
+            let Ok(cfg_str) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&cfg_str) else {
+                continue;
+            };
+            let Ok(inst_str) = fs::read_to_string(&char_json) else {
+                continue;
+            };
+            let Ok(inst) = serde_json::from_str::<serde_json::Value>(&inst_str) else {
+                continue;
+            };
             if let Some(cv) = cfg.get("version").and_then(|v| v.as_u64()) {
                 let iv = inst.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
                 if iv < cv {
@@ -964,13 +1159,15 @@ fn download_assets_blocking(assets_dir: &PathBuf) -> Result<(), String> {
 
 #[tauri::command]
 async fn update_assets(assets_dir: tauri::State<'_, Option<PathBuf>>) -> Result<(), String> {
-    let dir = assets_dir.inner().as_ref()
+    let dir = assets_dir
+        .inner()
+        .as_ref()
         .cloned()
         .unwrap_or_else(|| default_pet_dir().join("assets"));
 
-    tauri::async_runtime::spawn_blocking(move || {
-        download_assets_blocking(&dir)
-    }).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || download_assets_blocking(&dir))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn read_stdin() -> String {
@@ -991,11 +1188,25 @@ fn read_stdin() -> String {
 
             // JSON structure tracking (only for ASCII control chars, safe for UTF-8
             // since multi-byte sequences never contain bytes < 0x80)
-            if escape { escape = false; continue; }
-            if b == b'\\' && in_string { escape = true; continue; }
-            if b == b'"' { in_string = !in_string; continue; }
-            if in_string { continue; }
-            if b == b'{' { depth += 1; started = true; }
+            if escape {
+                escape = false;
+                continue;
+            }
+            if b == b'\\' && in_string {
+                escape = true;
+                continue;
+            }
+            if b == b'"' {
+                in_string = !in_string;
+                continue;
+            }
+            if in_string {
+                continue;
+            }
+            if b == b'{' {
+                depth += 1;
+                started = true;
+            }
             if b == b'}' {
                 depth -= 1;
                 if started && depth == 0 {
@@ -1006,7 +1217,8 @@ fn read_stdin() -> String {
         }
         let _ = tx.send(String::from_utf8_lossy(&buf).into_owned());
     });
-    rx.recv_timeout(std::time::Duration::from_millis(100)).unwrap_or_default()
+    rx.recv_timeout(std::time::Duration::from_millis(100))
+        .unwrap_or_default()
 }
 
 fn get_arg(args: &[String], flag: &str) -> Option<String> {
@@ -1038,7 +1250,10 @@ fn timestamp() -> String {
     let remaining = days % 365;
     let month = remaining / 30 + 1;
     let day = remaining % 30 + 1;
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, month, day, h, m, s)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y, month, day, h, m, s
+    )
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1058,12 +1273,21 @@ pub fn run() {
     let demo_mode = args.iter().any(|a| a == "--demo");
     let aggregate_mode = args.iter().any(|a| a == "--all");
 
-    let explicit_status = args.windows(2).find(|w| w[0] == "--status-file").map(|w| PathBuf::from(&w[1]));
-    let explicit_session = args.windows(2).find(|w| w[0] == "--session-id").map(|w| w[1].clone());
+    let explicit_status = args
+        .windows(2)
+        .find(|w| w[0] == "--status-file")
+        .map(|w| PathBuf::from(&w[1]));
+    let explicit_session = args
+        .windows(2)
+        .find(|w| w[0] == "--session-id")
+        .map(|w| w[1].clone());
 
     // Determine if we have an explicit session or need session selection
-    let (initial_status_path, initial_session_id, initial_lock) = if let Some(sf) = &explicit_status {
-        let sid = explicit_session.clone().unwrap_or_else(|| "unknown".to_string());
+    let (initial_status_path, initial_session_id, initial_lock) = if let Some(sf) = &explicit_status
+    {
+        let sid = explicit_session
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
         let pet_dir = default_pet_dir();
         let _ = fs::create_dir_all(&pet_dir);
         let lock_file = pet_dir.join(format!("pet-{}.lock", sid));
@@ -1114,7 +1338,23 @@ pub fn run() {
         .manage(lock_path_shared)
         .manage(assets_dir)
         .manage(AggregateMode(aggregate_mode))
-        .invoke_handler(tauri::generate_handler![get_status, get_session_id, get_assets_dir, load_asset, load_text_asset, load_custom_asset, is_dlc_installed, download_dlc, list_available_dlcs, list_character_packs, list_unlocked_sessions, list_all_sessions, is_aggregate_mode, bind_session, update_assets])
+        .invoke_handler(tauri::generate_handler![
+            get_status,
+            get_session_id,
+            get_assets_dir,
+            load_asset,
+            load_text_asset,
+            load_custom_asset,
+            is_dlc_installed,
+            download_dlc,
+            list_available_dlcs,
+            list_character_packs,
+            list_unlocked_sessions,
+            list_all_sessions,
+            is_aggregate_mode,
+            bind_session,
+            update_assets
+        ])
         .setup(move |app| {
             let window = app.get_webview_window("main").unwrap();
 
@@ -1162,14 +1402,17 @@ pub fn run() {
                     let mut i = 0;
                     loop {
                         let (state, detail) = demos[i % demos.len()];
-                        let _ = handle.emit("status-update", StatusPayload {
-                            state: state.to_string(),
-                            detail: detail.to_string(),
-                            tool: String::new(),
-                            event: "Demo".to_string(),
-                            session_id: "demo".to_string(),
-                            session_name: "Demo Mode".to_string(),
-                        });
+                        let _ = handle.emit(
+                            "status-update",
+                            StatusPayload {
+                                state: state.to_string(),
+                                detail: detail.to_string(),
+                                tool: String::new(),
+                                event: "Demo".to_string(),
+                                session_id: "demo".to_string(),
+                                session_name: "Demo Mode".to_string(),
+                            },
+                        );
                         i += 1;
                         std::thread::sleep(std::time::Duration::from_millis(1500));
                     }

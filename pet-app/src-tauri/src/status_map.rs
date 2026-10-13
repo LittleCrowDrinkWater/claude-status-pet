@@ -3,8 +3,16 @@
 
 /// All possible pet states
 pub const STATES: &[&str] = &[
-    "idle", "thinking", "reading", "editing", "searching",
-    "running", "delegating", "waiting", "error", "offline",
+    "idle",
+    "thinking",
+    "reading",
+    "editing",
+    "searching",
+    "running",
+    "delegating",
+    "waiting",
+    "error",
+    "offline",
 ];
 
 /// Map a generic event name to a pet state

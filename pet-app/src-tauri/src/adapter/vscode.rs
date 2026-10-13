@@ -12,8 +12,7 @@
 /// - PreCompact → ignored (no status change)
 /// - No sessionEnd/errorOccurred — Stop is the session end
 /// - SubagentStart/SubagentStop supported
-
-use super::{Adapter, NormalizedEvent, StdinInput, basename, truncate, md5_short, extract_str};
+use super::{basename, extract_str, md5_short, truncate, Adapter, NormalizedEvent, StdinInput};
 use std::path::Path;
 
 pub struct VscodeAdapter;
@@ -26,30 +25,40 @@ impl Adapter for VscodeAdapter {
         let cwd = stdin.cwd.as_deref().unwrap_or("");
 
         // VS Code provides sessionId in stdin
-        let session_id = stdin.session_id.as_deref()
+        let session_id = stdin
+            .session_id
+            .as_deref()
             .filter(|s| !s.is_empty())
             .map(|s| format!("vscode-{}", s))
-            .unwrap_or_else(|| format!("vscode-{}", md5_short(if cwd.is_empty() { "default" } else { cwd })));
+            .unwrap_or_else(|| {
+                format!(
+                    "vscode-{}",
+                    md5_short(if cwd.is_empty() { "default" } else { cwd })
+                )
+            });
 
         let session_name = format!(
             "{} (VS Code)",
-            Path::new(cwd).file_name().and_then(|n| n.to_str()).unwrap_or("vscode")
+            Path::new(cwd)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("vscode")
         );
 
         let (event, tool, detail) = match hook {
-            "SessionStart" => {
-                ("prompt".into(), String::new(), "Session started".into())
-            }
-            "UserPromptSubmit" => {
-                ("prompt".into(), String::new(), "Processing your prompt...".into())
-            }
+            "SessionStart" => ("prompt".into(), String::new(), "Session started".into()),
+            "UserPromptSubmit" => (
+                "prompt".into(),
+                String::new(),
+                "Processing your prompt...".into(),
+            ),
             "PreToolUse" => {
                 let file = extract_str(tool_input, "file_path")
                     .or_else(|| extract_str(tool_input, "filePath"))
                     .or_else(|| extract_str(tool_input, "path"));
                 let command = extract_str(tool_input, "command");
-                let pattern = extract_str(tool_input, "pattern")
-                    .or_else(|| extract_str(tool_input, "query"));
+                let pattern =
+                    extract_str(tool_input, "pattern").or_else(|| extract_str(tool_input, "query"));
 
                 let detail = if tool_name.starts_with("mcp__") || tool_name.starts_with("mcp_") {
                     // MCP tools: format as "server: tool"
@@ -74,13 +83,18 @@ impl Adapter for VscodeAdapter {
                         }
                         "searching" => {
                             let q = pattern.unwrap_or_default();
-                            if tool_name.contains("file_search") || tool_name.contains("find") || tool_name.contains("glob") {
+                            if tool_name.contains("file_search")
+                                || tool_name.contains("find")
+                                || tool_name.contains("glob")
+                            {
                                 format!("Finding: {}", truncate(&q, 30))
                             } else {
                                 format!("Searching: {}", truncate(&q, 30))
                             }
                         }
-                        "running" => format!("Running: {}", truncate(&command.unwrap_or_default(), 40)),
+                        "running" => {
+                            format!("Running: {}", truncate(&command.unwrap_or_default(), 40))
+                        }
                         "delegating" => "Delegating...".into(),
                         _ => format!("Using {}", tool_name),
                     }
@@ -96,18 +110,14 @@ impl Adapter for VscodeAdapter {
                 // Context compaction — not status-relevant
                 return None;
             }
-            "SubagentStart" => {
-                ("subagent".into(), "agent".into(), "Spawning sub-agent...".into())
-            }
-            "SubagentStop" => {
-                ("prompt".into(), String::new(), "Sub-agent finished".into())
-            }
-            "Stop" => {
-                ("done".into(), String::new(), "Done".into())
-            }
-            _ => {
-                ("prompt".into(), String::new(), format!("{}", hook))
-            }
+            "SubagentStart" => (
+                "subagent".into(),
+                "agent".into(),
+                "Spawning sub-agent...".into(),
+            ),
+            "SubagentStop" => ("prompt".into(), String::new(), "Sub-agent finished".into()),
+            "Stop" => ("done".into(), String::new(), "Done".into()),
+            _ => ("prompt".into(), String::new(), format!("{}", hook)),
         };
 
         Some(NormalizedEvent {

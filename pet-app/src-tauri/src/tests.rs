@@ -34,7 +34,10 @@ mod tests {
 
     #[test]
     fn test_tool_to_state_copilot_tools() {
-        assert_eq!(status_map::tool_to_state("replace_string_in_file"), "editing");
+        assert_eq!(
+            status_map::tool_to_state("replace_string_in_file"),
+            "editing"
+        );
         assert_eq!(status_map::tool_to_state("create_file"), "editing");
         assert_eq!(status_map::tool_to_state("edit_file"), "editing");
         assert_eq!(status_map::tool_to_state("read_file"), "reading");
@@ -48,9 +51,15 @@ mod tests {
 
     #[test]
     fn test_tool_to_state_mcp_tools() {
-        assert_eq!(status_map::tool_to_state("mcp__github__search_code"), "searching");
+        assert_eq!(
+            status_map::tool_to_state("mcp__github__search_code"),
+            "searching"
+        );
         assert_eq!(status_map::tool_to_state("mcp__browser__fetch"), "reading");
-        assert_eq!(status_map::tool_to_state("mcp__unknown__something"), "running");
+        assert_eq!(
+            status_map::tool_to_state("mcp__unknown__something"),
+            "running"
+        );
     }
 
     #[test]
@@ -61,19 +70,37 @@ mod tests {
 
     #[test]
     fn test_tool_detail_generation() {
-        assert_eq!(status_map::tool_detail("Edit", "", "/path/to/main.rs"), "Editing main.rs");
-        assert_eq!(status_map::tool_detail("Read", "", "/foo/bar.js"), "Reading bar.js");
-        assert_eq!(status_map::tool_detail("Grep", "", "TODO"), "Searching: TODO");
+        assert_eq!(
+            status_map::tool_detail("Edit", "", "/path/to/main.rs"),
+            "Editing main.rs"
+        );
+        assert_eq!(
+            status_map::tool_detail("Read", "", "/foo/bar.js"),
+            "Reading bar.js"
+        );
+        assert_eq!(
+            status_map::tool_detail("Grep", "", "TODO"),
+            "Searching: TODO"
+        );
         assert_eq!(status_map::tool_detail("Bash", "", ""), "Using Bash");
         // Explicit detail overrides
-        assert_eq!(status_map::tool_detail("Edit", "Custom detail", "/foo"), "Custom detail");
+        assert_eq!(
+            status_map::tool_detail("Edit", "Custom detail", "/foo"),
+            "Custom detail"
+        );
     }
 
     // ── Claude adapter tests ──
 
     #[test]
     fn test_claude_prompt() {
-        let stdin = make_stdin(Some("UserPromptSubmit"), None, None, Some("sess1"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("UserPromptSubmit"),
+            None,
+            None,
+            Some("sess1"),
+            Some("/proj"),
+        );
         let ev = adapter::claude::ClaudeAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "prompt");
         assert_eq!(ev.session_id, "sess1");
@@ -84,7 +111,13 @@ mod tests {
     #[test]
     fn test_claude_tool_edit() {
         let input = serde_json::json!({"file_path": "/foo/bar.rs"});
-        let stdin = make_stdin(Some("PreToolUse"), Some("Edit"), Some(input), Some("s1"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("PreToolUse"),
+            Some("Edit"),
+            Some(input),
+            Some("s1"),
+            Some("/proj"),
+        );
         let ev = adapter::claude::ClaudeAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "tool");
         assert_eq!(ev.tool, "Edit");
@@ -94,7 +127,13 @@ mod tests {
     #[test]
     fn test_claude_tool_grep() {
         let input = serde_json::json!({"pattern": "TODO"});
-        let stdin = make_stdin(Some("PreToolUse"), Some("Grep"), Some(input), Some("s1"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("PreToolUse"),
+            Some("Grep"),
+            Some(input),
+            Some("s1"),
+            Some("/proj"),
+        );
         let ev = adapter::claude::ClaudeAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "tool");
         assert!(ev.detail.contains("TODO"));
@@ -102,7 +141,13 @@ mod tests {
 
     #[test]
     fn test_claude_tool_mcp() {
-        let stdin = make_stdin(Some("PreToolUse"), Some("mcp__github__search_code"), None, Some("s1"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("PreToolUse"),
+            Some("mcp__github__search_code"),
+            None,
+            Some("s1"),
+            Some("/proj"),
+        );
         let ev = adapter::claude::ClaudeAdapter.parse(&stdin).unwrap();
         assert!(ev.detail.contains("github: search_code"));
     }
@@ -172,7 +217,13 @@ mod tests {
     fn test_copilot_post_tool_task_complete_is_done() {
         // In autopilot mode, agentStop does NOT fire between iterations.
         // postToolUse with tool_name=task_complete is the only end-of-turn signal.
-        let stdin = make_stdin(Some("postToolUse"), Some("task_complete"), None, None, Some("/proj"));
+        let stdin = make_stdin(
+            Some("postToolUse"),
+            Some("task_complete"),
+            None,
+            None,
+            Some("/proj"),
+        );
         let ev = adapter::copilot::CopilotAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "done");
         assert_eq!(ev.detail, "Done");
@@ -188,7 +239,13 @@ mod tests {
 
     #[test]
     fn test_copilot_session_name_has_suffix() {
-        let stdin = make_stdin(Some("sessionStart"), None, None, None, Some("/projects/my-app"));
+        let stdin = make_stdin(
+            Some("sessionStart"),
+            None,
+            None,
+            None,
+            Some("/projects/my-app"),
+        );
         let ev = adapter::copilot::CopilotAdapter.parse(&stdin).unwrap();
         assert!(ev.session_name.contains("Copilot"));
         assert!(ev.session_name.contains("my-app"));
@@ -209,7 +266,11 @@ mod tests {
         // Need to inject the event name as if from CLI arg; use hook_event_name fallback.
         let ev = adapter::copilot::CopilotAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "error");
-        assert!(ev.detail.to_lowercase().contains("command"), "got: {}", ev.detail);
+        assert!(
+            ev.detail.to_lowercase().contains("command"),
+            "got: {}",
+            ev.detail
+        );
     }
 
     #[test]
@@ -248,7 +309,13 @@ mod tests {
     fn test_copilot_permission_request_ignored() {
         // permissionRequest is intentionally not hooked (can block the permission flow).
         // Permission state is surfaced via the notification(permission_prompt) event instead.
-        let stdin = make_stdin(Some("permissionRequest"), Some("bash"), None, None, Some("/proj"));
+        let stdin = make_stdin(
+            Some("permissionRequest"),
+            Some("bash"),
+            None,
+            None,
+            Some("/proj"),
+        );
         assert!(adapter::copilot::CopilotAdapter.parse(&stdin).is_none());
     }
 
@@ -285,7 +352,13 @@ mod tests {
 
     #[test]
     fn test_vscode_session_start() {
-        let stdin = make_stdin(Some("SessionStart"), None, None, Some("vsc-001"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("SessionStart"),
+            None,
+            None,
+            Some("vsc-001"),
+            Some("/proj"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "prompt");
         assert!(ev.session_id.starts_with("vscode-"));
@@ -294,7 +367,13 @@ mod tests {
 
     #[test]
     fn test_vscode_user_prompt() {
-        let stdin = make_stdin(Some("UserPromptSubmit"), None, None, Some("vsc-001"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("UserPromptSubmit"),
+            None,
+            None,
+            Some("vsc-001"),
+            Some("/proj"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "prompt");
     }
@@ -302,7 +381,13 @@ mod tests {
     #[test]
     fn test_vscode_pre_tool_edit() {
         let input = serde_json::json!({"filePath": "/foo/bar.ts"});
-        let stdin = make_stdin(Some("PreToolUse"), Some("replace_string_in_file"), Some(input), Some("vsc-001"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("PreToolUse"),
+            Some("replace_string_in_file"),
+            Some(input),
+            Some("vsc-001"),
+            Some("/proj"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "tool");
         assert_eq!(ev.tool, "replace_string_in_file");
@@ -312,7 +397,13 @@ mod tests {
     #[test]
     fn test_vscode_pre_tool_read() {
         let input = serde_json::json!({"filePath": "/foo/main.rs"});
-        let stdin = make_stdin(Some("PreToolUse"), Some("read_file"), Some(input), Some("vsc-001"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("PreToolUse"),
+            Some("read_file"),
+            Some(input),
+            Some("vsc-001"),
+            Some("/proj"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "tool");
         assert!(ev.detail.contains("main.rs"));
@@ -321,7 +412,13 @@ mod tests {
     #[test]
     fn test_vscode_pre_tool_search() {
         let input = serde_json::json!({"query": "TODO fixme"});
-        let stdin = make_stdin(Some("PreToolUse"), Some("grep_search"), Some(input), Some("vsc-001"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("PreToolUse"),
+            Some("grep_search"),
+            Some(input),
+            Some("vsc-001"),
+            Some("/proj"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "tool");
         assert!(ev.detail.contains("TODO fixme"));
@@ -330,7 +427,13 @@ mod tests {
     #[test]
     fn test_vscode_pre_tool_terminal() {
         let input = serde_json::json!({"command": "npm test"});
-        let stdin = make_stdin(Some("PreToolUse"), Some("run_in_terminal"), Some(input), Some("vsc-001"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("PreToolUse"),
+            Some("run_in_terminal"),
+            Some(input),
+            Some("vsc-001"),
+            Some("/proj"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "tool");
         assert!(ev.detail.contains("npm test"));
@@ -338,7 +441,13 @@ mod tests {
 
     #[test]
     fn test_vscode_pre_tool_mcp() {
-        let stdin = make_stdin(Some("PreToolUse"), Some("mcp__github__search_code"), None, Some("vsc-001"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("PreToolUse"),
+            Some("mcp__github__search_code"),
+            None,
+            Some("vsc-001"),
+            Some("/proj"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
         assert!(ev.detail.contains("github: search_code"));
     }
@@ -346,46 +455,91 @@ mod tests {
     #[test]
     fn test_vscode_pre_tool_mcp_single_underscore() {
         // VS Code MCP tools use single underscore: mcp_server_tool_name
-        let stdin = make_stdin(Some("PreToolUse"), Some("mcp_gitkraken_git_add_or_commit"), None, Some("vsc-001"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("PreToolUse"),
+            Some("mcp_gitkraken_git_add_or_commit"),
+            None,
+            Some("vsc-001"),
+            Some("/proj"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
-        assert!(ev.detail.contains("gitkraken"), "detail should contain server name, got: {}", ev.detail);
-        assert!(ev.detail.contains("git_add_or_commit"), "detail should contain full tool name, got: {}", ev.detail);
+        assert!(
+            ev.detail.contains("gitkraken"),
+            "detail should contain server name, got: {}",
+            ev.detail
+        );
+        assert!(
+            ev.detail.contains("git_add_or_commit"),
+            "detail should contain full tool name, got: {}",
+            ev.detail
+        );
     }
 
     #[test]
     fn test_vscode_pre_tool_mcp_toolinput_camelcase() {
         // VS Code may send camelCase toolInput instead of snake_case tool_input
         let input = serde_json::json!({ "filePath": "/proj/src/main.rs" });
-        let raw = format!(r#"{{"hookEventName":"PreToolUse","toolName":"read_file","toolInput":{},"sessionId":"vsc-001","cwd":"/proj"}}"#, input);
+        let raw = format!(
+            r#"{{"hookEventName":"PreToolUse","toolName":"read_file","toolInput":{},"sessionId":"vsc-001","cwd":"/proj"}}"#,
+            input
+        );
         let stdin: StdinInput = serde_json::from_str(&raw).unwrap();
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
-        assert!(ev.detail.contains("main.rs"), "should parse filePath from toolInput, got: {}", ev.detail);
+        assert!(
+            ev.detail.contains("main.rs"),
+            "should parse filePath from toolInput, got: {}",
+            ev.detail
+        );
     }
 
     #[test]
     fn test_vscode_post_tool_is_thinking() {
-        let stdin = make_stdin(Some("PostToolUse"), None, None, Some("vsc-001"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("PostToolUse"),
+            None,
+            None,
+            Some("vsc-001"),
+            Some("/proj"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "prompt"); // thinking, not idle
     }
 
     #[test]
     fn test_vscode_pre_compact_ignored() {
-        let stdin = make_stdin(Some("PreCompact"), None, None, Some("vsc-001"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("PreCompact"),
+            None,
+            None,
+            Some("vsc-001"),
+            Some("/proj"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin);
         assert!(ev.is_none());
     }
 
     #[test]
     fn test_vscode_subagent_start() {
-        let stdin = make_stdin(Some("SubagentStart"), None, None, Some("vsc-001"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("SubagentStart"),
+            None,
+            None,
+            Some("vsc-001"),
+            Some("/proj"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "subagent");
     }
 
     #[test]
     fn test_vscode_subagent_stop() {
-        let stdin = make_stdin(Some("SubagentStop"), None, None, Some("vsc-001"), Some("/proj"));
+        let stdin = make_stdin(
+            Some("SubagentStop"),
+            None,
+            None,
+            Some("vsc-001"),
+            Some("/proj"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
         assert_eq!(ev.event, "prompt");
     }
@@ -399,7 +553,13 @@ mod tests {
 
     #[test]
     fn test_vscode_session_name_has_suffix() {
-        let stdin = make_stdin(Some("SessionStart"), None, None, Some("vsc-001"), Some("/projects/my-app"));
+        let stdin = make_stdin(
+            Some("SessionStart"),
+            None,
+            None,
+            Some("vsc-001"),
+            Some("/projects/my-app"),
+        );
         let ev = adapter::vscode::VscodeAdapter.parse(&stdin).unwrap();
         assert!(ev.session_name.contains("VS Code"));
         assert!(ev.session_name.contains("my-app"));

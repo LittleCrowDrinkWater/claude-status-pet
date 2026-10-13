@@ -2,7 +2,6 @@
 ///
 /// Each adapter parses a specific agent's stdin JSON format and produces
 /// a NormalizedEvent that the write-status command can process.
-
 pub mod claude;
 pub mod copilot;
 pub mod vscode;
@@ -78,9 +77,13 @@ pub fn basename(path: &str) -> &str {
 
 /// Truncate a string to `max` bytes, respecting UTF-8 char boundaries
 pub fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { return s; }
+    if s.len() <= max {
+        return s;
+    }
     let mut idx = max;
-    while idx > 0 && !s.is_char_boundary(idx) { idx -= 1; }
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
     &s[..idx]
 }
 
@@ -88,14 +91,20 @@ pub fn truncate(s: &str, max: usize) -> &str {
 pub fn md5_short(input: &str) -> String {
     let mut hash: u64 = 0;
     for (i, b) in input.bytes().enumerate() {
-        hash = hash.wrapping_mul(31).wrapping_add(b as u64).wrapping_add(i as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add(b as u64)
+            .wrapping_add(i as u64);
     }
     format!("{:08x}", hash)
 }
 
 /// Extract a string value from a JSON object by key
 pub fn extract_str(input: Option<&serde_json::Value>, key: &str) -> Option<String> {
-    input?.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+    input?
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Extract a string value from a JSON object, trying multiple keys in order
