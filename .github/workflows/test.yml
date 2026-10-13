@@ -21,6 +21,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -38,10 +40,14 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('pet-app/src-tauri/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: Check formatting
+        working-directory: pet-app/src-tauri
+        run: cargo fmt --check
+
       - name: Run tests
         working-directory: pet-app/src-tauri
         run: cargo test
 
-      - name: Check compilation
+      - name: Run clippy
         working-directory: pet-app/src-tauri
-        run: cargo check
+        run: cargo clippy --all-targets -- -D warnings

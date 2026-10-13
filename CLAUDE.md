@@ -220,8 +220,12 @@ npx tauri build  # requires Rust toolchain + MSVC on Windows
 
 ```bash
 cd pet-app/src-tauri
+cargo fmt --check
 cargo test
+cargo clippy --all-targets -- -D warnings
 ```
+
+CI runs all three on Ubuntu, Windows and macOS; any rustfmt diff or clippy warning fails the build.
 
 ## Releasing
 
