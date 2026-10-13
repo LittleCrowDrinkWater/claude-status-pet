@@ -244,6 +244,11 @@ impl Adapter for CopilotAdapter {
             session_id,
             session_name,
             launch_only,
+            prompt: (hook == "userPromptSubmitted")
+                .then(|| stdin.prompt.clone())
+                .flatten(),
+            cwd: cwd.to_string(),
+            session_title: None,
         })
     }
 }

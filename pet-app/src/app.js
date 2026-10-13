@@ -404,7 +404,7 @@ function updateStatus(status) {
     return;
   }
 
-  if (sessionName) sessionNameEl.textContent = sessionName;
+  if (sessionName) renderSessionName(sessionName, status.session_color, status.session_tooltip);
 
   if (mode === 'ferris') {
     showImage();
@@ -455,6 +455,20 @@ function updateStatus(status) {
     clearTimeout(bubbleTimeout);
     bubbleTimeout = setTimeout(() => { bubble.classList.add('hidden'); }, 30000);
   }
+}
+
+function renderSessionName(name, color, tooltip) {
+  sessionNameEl.replaceChildren();
+  if (color) sessionNameEl.appendChild(createSessionDot(color));
+  sessionNameEl.appendChild(document.createTextNode(name));
+  sessionNameEl.title = tooltip || '';
+}
+
+function createSessionDot(color) {
+  const dot = document.createElement('span');
+  dot.className = 'session-dot';
+  dot.style.background = color;
+  return dot;
 }
 
 // ── Menu ──
@@ -832,15 +846,41 @@ function effectiveState(session, now) {
 
 function sessionLabel(session) {
   const name = session.session_name || session.session_id.slice(0, 8);
-  const sameName = aggregateSessions.filter(s => s.session_name === session.session_name).length > 1;
-  return sameName ? name + '·' + session.session_id.slice(0, 4) : name;
+  const sameName = aggregateSessions.filter(s => s.session_name === session.session_name);
+  if (sameName.length < 2) return name;
+  // Sessions in one repo usually differ by branch; fall back to the ID when they share one too
+  const branchIsUnique = session.branch && sameName.filter(s => s.branch === session.branch).length === 1;
+  return name + '·' + (branchIsUnique ? session.branch : session.session_id.slice(0, 4));
+}
+
+// Same session, same color on every refresh, without storing anything
+function sessionColor(sessionId) {
+  let hash = 0;
+  for (let i = 0; i < sessionId.length; i++) hash = (hash * 31 + sessionId.charCodeAt(i)) >>> 0;
+  return 'hsl(' + (hash % 360) + ', 70%, 60%)';
 }
 
 function formatAge(ms) {
   const minutes = Math.floor(ms / 60000);
   if (minutes < 1) return 'now';
   if (minutes < 60) return minutes + 'm';
-  return Math.floor(minutes / 60) + 'h';
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 ? hours + 'h' + (minutes % 60) + 'm' : hours + 'h';
+}
+
+// Busy states count from the user's prompt, since tools switch the state many times per turn;
+// the rest count from when the session entered that state
+function stateStartedAt(session) {
+  if (WORKING_STATES.has(session.state) && session.turn_started) return session.turn_started;
+  return session.state_since || session.last_modified;
+}
+
+function sessionTooltip(session, now) {
+  const head = session.session_name + (session.branch ? ' [' + session.branch + ']' : '');
+  const lines = [head];
+  if (session.title) lines.push(session.title);
+  lines.push(session.state + ' · ' + formatAge(now - stateStartedAt(session)));
+  return lines.join('\n');
 }
 
 async function refreshSessions() {
@@ -877,15 +917,34 @@ function renderAggregate() {
   }
   const otherBusy = aggregateSessions.filter(s => s !== pick && (WORKING_STATES.has(s.state) || s.state === 'waiting')).length;
   const label = sessionLabel(pick) + (otherBusy ? ' +' + otherBusy : '');
-  applyAggregateStatus({ state: pick.state, detail: pick.detail, session_name: label });
+  const now = Date.now();
+  applyAggregateStatus({
+    state: pick.state,
+    detail: pick.detail,
+    session_name: label,
+    session_color: sessionColor(pick.session_id),
+    session_tooltip: sessionTooltip(pick, now),
+  }, durationSuffix(pick, now));
 }
 
-// Polling re-renders the same status every few seconds; skip unchanged ones so the idle bubble can time out
-function applyAggregateStatus(status) {
-  const key = status.state + '|' + status.detail + '|' + status.session_name;
-  if (key === lastAggregateKey) return;
+// Shown only for states that need attention or are taking a while; idle needs no clock
+function durationSuffix(session, now) {
+  if (!WORKING_STATES.has(session.state) && session.state !== 'waiting') return '';
+  const elapsed = now - stateStartedAt(session);
+  return elapsed >= 60000 ? ' · ' + formatAge(elapsed) : '';
+}
+
+// Polling re-renders the same status every few seconds; skip unchanged ones so the idle bubble can time out.
+// A ticking duration only rewrites the bubble text, so it neither replays the bubble animation nor re-rolls the sprite.
+function applyAggregateStatus(status, suffix = '') {
+  const key = status.state + '|' + status.detail + '|' + status.session_name + '|' + status.session_color;
+  sessionNameEl.title = status.session_tooltip || '';
+  if (key === lastAggregateKey) {
+    if (status.detail) statusText.textContent = status.detail + suffix;
+    return;
+  }
   lastAggregateKey = key;
-  updateStatus(status);
+  updateStatus({ ...status, detail: status.detail && status.detail + suffix });
   // updateStatus leaves the bubble alone when detail is empty, which would keep showing the
   // previously displayed session's text under this session's label
   if (!status.detail && status.state !== 'offline') {
@@ -905,13 +964,21 @@ function buildSessionsPage() {
   }, pinnedSessionId ? '' : 'active');
   const now = Date.now();
   for (const session of aggregateSessions) {
-    const text = sessionLabel(session) + ' · ' + session.state + ' · ' + formatAge(now - session.last_modified);
-    addMenuItem(charMenu, text, () => {
+    addMenuItem(charMenu, sessionLabel(session), () => {
       pinnedSessionId = session.session_id;
       lastAggregateKey = '';
       closeMenu();
       renderAggregate();
     }, pinnedSessionId === session.session_id ? 'active' : '');
+    const item = charMenu.lastElementChild;
+    item.prepend(createSessionDot(sessionColor(session.session_id)));
+    item.title = sessionTooltip(session, now);
+    // State and time go first: in the 200px window the title is what gets cut off
+    const subtext = document.createElement('div');
+    subtext.className = 'menu-subtext';
+    subtext.textContent = session.state + ' ' + formatAge(now - stateStartedAt(session))
+      + (session.title ? ' · ' + session.title : '');
+    item.appendChild(subtext);
   }
 }
 

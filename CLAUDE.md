@@ -49,6 +49,7 @@ claude-status-pet/
 │   ├── INSTALL.md           # Agent-readable install instructions
 │   ├── CUSTOM-CHARACTERS.md
 │   ├── HOOKS.md             # Hook event → status mapping reference
+│   ├── FEATURE-PLAN.md      # Evaluated extensions and their status (Chinese)
 │   └── images/              # Compressed showcase GIFs
 ├── pet-app/                 # Tauri desktop app
 │   ├── src/                 # Frontend (HTML/CSS/JS — plain files, no framework)
@@ -64,6 +65,7 @@ claude-status-pet/
 │       │   │   ├── claude.rs   # Claude Code adapter
 │       │   │   └── copilot.rs  # GitHub Copilot CLI adapter
 │       │   ├── status_map.rs   # Universal tool→state fuzzy matching
+│       │   ├── session_meta.rs # Title, git branch and turn/state timing carried across events
 │       │   └── tests.rs     # Unit tests
 │       ├── Cargo.toml       # Dependencies: tauri, serde, notify, base64, ureq, zip
 │       └── tauri.conf.json
@@ -248,6 +250,15 @@ Use the `/release` skill or manually:
   "event": "tool",
   "session_id": "abc123",
   "session_name": "my-project",
-  "timestamp": "2026-04-02T10:30:00Z"
+  "timestamp": "2026-04-02T10:30:00Z",
+  "claude_pid": 34732,
+  "claude_started": 134363328502453608,
+  "title": "fix the login bug",
+  "branch": "main",
+  "turn_started": 1791863087864,
+  "state_since": 1791863090101
 }
 ```
+
+- `claude_pid` / `claude_started`: the `claude.exe` ancestor (Windows only), reused from the previous status while that process still runs.
+- `title`, `branch`, `turn_started`, `state_since`: carried across events by `session_meta.rs`. `title` is the `/rename` name or else the first prompt; `turn_started` resets on each prompt; `state_since` resets only when the state group changes (all busy states form one "working" group). Times are Unix ms.

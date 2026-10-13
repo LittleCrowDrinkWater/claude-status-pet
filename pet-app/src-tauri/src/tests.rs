@@ -587,6 +587,148 @@ fn test_format_utc_timestamp() {
     );
 }
 
+// ── session meta tests ──
+
+#[test]
+fn test_claude_prompt_carries_text_and_title() {
+    let mut stdin = make_stdin(
+        Some("UserPromptSubmit"),
+        None,
+        None,
+        Some("s1"),
+        Some("/proj"),
+    );
+    stdin.prompt = Some("fix the bug".to_string());
+    stdin.session_title = Some("bug hunt".to_string());
+    let ev = adapter::claude::ClaudeAdapter.parse(&stdin).unwrap();
+    assert_eq!(ev.prompt.as_deref(), Some("fix the bug"));
+    assert_eq!(ev.session_title.as_deref(), Some("bug hunt"));
+    assert_eq!(ev.cwd, "/proj");
+
+    // Only the prompt event starts a turn, even if another event carried a prompt field
+    let mut tool = make_stdin(
+        Some("PreToolUse"),
+        Some("Bash"),
+        None,
+        Some("s1"),
+        Some("/proj"),
+    );
+    tool.prompt = Some("stale".to_string());
+    let ev = adapter::claude::ClaudeAdapter.parse(&tool).unwrap();
+    assert_eq!(ev.prompt, None);
+}
+
+#[test]
+fn test_session_title_from_prompt() {
+    use crate::session_meta::session_title;
+    assert_eq!(
+        session_title("  \n  fix   the login\tbug \nmore lines"),
+        Some("fix the login bug".to_string())
+    );
+    assert_eq!(session_title("/compact"), None);
+    assert_eq!(session_title("<command-name>x</command-name>"), None);
+    assert_eq!(session_title("   "), None);
+    let long = "看".repeat(60);
+    let title = session_title(&long).unwrap();
+    assert_eq!(title.chars().count(), 40);
+    assert!(title.ends_with('…'));
+}
+
+#[test]
+fn test_branch_from_head() {
+    use crate::session_meta::branch_from_head;
+    assert_eq!(
+        branch_from_head("ref: refs/heads/feat/login\n"),
+        Some("feat/login".to_string())
+    );
+    assert_eq!(
+        branch_from_head("4e5de62a1b2c3d4e5f60718293a4b5c6d7e8f901\n"),
+        Some("4e5de62".to_string())
+    );
+    assert_eq!(branch_from_head("garbage"), None);
+}
+
+#[test]
+fn test_git_branch_in_repo_and_worktree() {
+    use crate::session_meta::git_branch;
+    let root = std::env::temp_dir().join(format!("pet-git-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let repo_sub = root.join("repo").join("src").join("deep");
+    std::fs::create_dir_all(&repo_sub).unwrap();
+    std::fs::create_dir_all(root.join("repo").join(".git")).unwrap();
+    std::fs::write(root.join("repo/.git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    let worktree_git = root.join("repo/.git/worktrees/wt");
+    std::fs::create_dir_all(&worktree_git).unwrap();
+    std::fs::write(worktree_git.join("HEAD"), "ref: refs/heads/feature\n").unwrap();
+    std::fs::create_dir_all(root.join("wt")).unwrap();
+    std::fs::write(root.join("wt/.git"), "gitdir: ../repo/.git/worktrees/wt\n").unwrap();
+
+    assert_eq!(
+        git_branch(&repo_sub.to_string_lossy()),
+        Some("main".to_string())
+    );
+    assert_eq!(
+        git_branch(&root.join("wt").to_string_lossy()),
+        Some("feature".to_string())
+    );
+    assert_eq!(git_branch(""), None);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn test_next_meta_keeps_turn_and_state_group() {
+    use crate::session_meta::next_meta;
+    let no_branch = || None;
+    let first = next_meta(None, Some("fix the bug"), None, "thinking", 1000, || {
+        Some("main".to_string())
+    });
+    assert_eq!(first.title.as_deref(), Some("fix the bug"));
+    assert_eq!(first.branch.as_deref(), Some("main"));
+    assert_eq!(first.turn_started, Some(1000));
+    assert_eq!(first.state_since, 1000);
+
+    // A tool event inside the same turn keeps the turn start and, within the working group,
+    // the state start; the branch is not looked up again
+    let previous = serde_json::json!({
+        "state": "thinking", "title": "fix the bug", "branch": "main",
+        "turn_started": 1000, "state_since": 1000
+    });
+    let tool = next_meta(Some(&previous), None, None, "editing", 5000, || {
+        panic!("branch looked up outside a prompt")
+    });
+    assert_eq!(tool.title.as_deref(), Some("fix the bug"));
+    assert_eq!(tool.branch.as_deref(), Some("main"));
+    assert_eq!(tool.turn_started, Some(1000));
+    assert_eq!(tool.state_since, 1000);
+
+    // Leaving the working group restarts the state clock but not the turn
+    let waiting = next_meta(Some(&previous), None, None, "waiting", 9000, no_branch);
+    assert_eq!(waiting.turn_started, Some(1000));
+    assert_eq!(waiting.state_since, 9000);
+
+    // A later prompt starts a new turn but keeps the first prompt as the title,
+    // unless the session was renamed
+    let next_turn = next_meta(
+        Some(&previous),
+        Some("another task"),
+        None,
+        "thinking",
+        20000,
+        no_branch,
+    );
+    assert_eq!(next_turn.title.as_deref(), Some("fix the bug"));
+    assert_eq!(next_turn.turn_started, Some(20000));
+    let renamed = next_meta(
+        Some(&previous),
+        Some("another task"),
+        Some("login refactor"),
+        "thinking",
+        20000,
+        no_branch,
+    );
+    assert_eq!(renamed.title.as_deref(), Some("login refactor"));
+}
+
 #[test]
 fn test_safe_session_id() {
     assert!(crate::is_safe_session_id(
@@ -644,5 +786,7 @@ fn make_stdin(
         reason: None,
         notification_type: None,
         agent_name: None,
+        prompt: None,
+        session_title: None,
     }
 }

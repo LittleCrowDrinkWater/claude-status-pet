@@ -96,6 +96,11 @@ impl Adapter for ClaudeAdapter {
             session_id: session_id.to_string(),
             session_name: session_name.to_string(),
             launch_only: false,
+            prompt: (hook == "UserPromptSubmit")
+                .then(|| stdin.prompt.clone())
+                .flatten(),
+            cwd: cwd.to_string(),
+            session_title: stdin.session_title.clone(),
         })
     }
 }

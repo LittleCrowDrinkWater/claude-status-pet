@@ -117,6 +117,17 @@ body:not(.placed) {
   display: none;
 }
 
+/* Per-session color, shared by the label and the Sessions menu */
+.session-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+}
+
 /* State label */
 #state-label {
   font-size: 12px;
@@ -304,6 +315,16 @@ body.no-motion #ferris-wrapper, body.no-motion #ascii-art {
 .menu-item.active {
   color: #e06c3c;
   font-weight: bold;
+}
+
+/* Session title under a Sessions menu entry */
+.menu-subtext {
+  margin: 2px 0 0 12px;
+  font-size: 10px;
+  font-weight: 400;
+  color: #888;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .menu-close-bar {

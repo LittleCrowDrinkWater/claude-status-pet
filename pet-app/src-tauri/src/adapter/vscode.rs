@@ -127,6 +127,11 @@ impl Adapter for VscodeAdapter {
             session_id,
             session_name,
             launch_only: false,
+            prompt: (hook == "UserPromptSubmit")
+                .then(|| stdin.prompt.clone())
+                .flatten(),
+            cwd: cwd.to_string(),
+            session_title: None,
         })
     }
 }

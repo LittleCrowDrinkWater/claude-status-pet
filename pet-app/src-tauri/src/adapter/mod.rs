@@ -22,6 +22,12 @@ pub struct NormalizedEvent {
     pub session_name: String,
     /// If true, only launch GUI — don't write status file
     pub launch_only: bool,
+    /// The user's message, set only for prompt-submit events; it starts a new turn
+    pub prompt: Option<String>,
+    /// Working directory of the session, used to find its git branch
+    pub cwd: String,
+    /// Name the user gave the session with /rename, when the agent reports one
+    pub session_title: Option<String>,
 }
 
 /// Raw JSON from stdin (loosely typed for all adapters)
@@ -52,6 +58,12 @@ pub struct StdinInput {
     // Copilot subagent events: name of the subagent
     #[serde(alias = "agentName", default)]
     pub agent_name: Option<String>,
+    // Prompt-submit hooks: the text the user sent
+    #[serde(default)]
+    pub prompt: Option<String>,
+    // Claude Code: custom session title, present on SessionStart and UserPromptSubmit once set
+    #[serde(default)]
+    pub session_title: Option<String>,
 }
 
 pub trait Adapter {

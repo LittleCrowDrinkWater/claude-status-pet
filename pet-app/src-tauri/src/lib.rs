@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 
 pub mod adapter;
+pub mod session_meta;
 pub mod status_map;
 #[cfg(test)]
 mod tests;
@@ -54,7 +55,7 @@ fn debug_log(path: &Path, msg: &str) {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Default, Serialize)]
 struct StatusPayload {
     state: String,
     detail: String,
@@ -62,6 +63,10 @@ struct StatusPayload {
     event: String,
     session_id: String,
     session_name: String,
+    title: String,
+    branch: String,
+    turn_started: Option<u64>,
+    state_since: Option<u64>,
 }
 
 fn default_status_path() -> PathBuf {
@@ -81,6 +86,10 @@ fn parse_status(content: &str) -> Option<StatusPayload> {
         event: v["event"].as_str().unwrap_or("").to_string(),
         session_id: v["session_id"].as_str().unwrap_or("").to_string(),
         session_name: v["session_name"].as_str().unwrap_or("").to_string(),
+        title: v["title"].as_str().unwrap_or("").to_string(),
+        branch: v["branch"].as_str().unwrap_or("").to_string(),
+        turn_started: v["turn_started"].as_u64(),
+        state_since: v["state_since"].as_u64(),
     })
 }
 
@@ -109,6 +118,10 @@ struct SessionInfo {
     session_name: String,
     state: String,
     detail: String,
+    title: String,
+    branch: String,
+    turn_started: Option<u64>,
+    state_since: Option<u64>,
     status_file: String,
     last_modified: u64,
     /// None when the status file has no Claude process recorded (older binary, other agents, non-Windows)
@@ -116,12 +129,11 @@ struct SessionInfo {
 }
 
 /// The Claude process PID and creation time recorded in a status file.
-fn read_claude_process(path: &Path) -> Option<(u32, u64)> {
-    parse_claude_process(&fs::read_to_string(path).ok()?)
+fn parse_claude_process(content: &str) -> Option<(u32, u64)> {
+    claude_process_in(&serde_json::from_str(content).ok()?)
 }
 
-fn parse_claude_process(content: &str) -> Option<(u32, u64)> {
-    let v: serde_json::Value = serde_json::from_str(content).ok()?;
+fn claude_process_in(v: &serde_json::Value) -> Option<(u32, u64)> {
     let pid = u32::try_from(v["claude_pid"].as_u64()?).ok()?;
     let started = v["claude_started"].as_u64()?;
     Some((pid, started))
@@ -129,8 +141,9 @@ fn parse_claude_process(content: &str) -> Option<(u32, u64)> {
 
 /// Reuses the process recorded by the previous hook of this session while it still runs;
 /// walking the process tree takes about 10ms, checking one PID well under 1ms.
-fn current_claude_process(status_file: &Path) -> Option<(u32, u64)> {
-    read_claude_process(status_file)
+fn current_claude_process(previous: Option<&serde_json::Value>) -> Option<(u32, u64)> {
+    previous
+        .and_then(claude_process_in)
         .filter(|&(pid, started)| is_same_process_running(pid, started))
         .or_else(find_claude_ancestor)
 }
@@ -235,8 +248,7 @@ fn spawn_status_file_watcher(status_file: PathBuf, handle: tauri::AppHandle) {
                             detail: "Session ended".to_string(),
                             tool: String::new(),
                             event: "SessionEnd".to_string(),
-                            session_id: String::new(),
-                            session_name: String::new(),
+                            ..Default::default()
                         },
                     );
                 }
@@ -371,18 +383,21 @@ fn collect_sessions(skip_locked: bool) -> Vec<SessionInfo> {
                 })
                 .unwrap_or(0);
             let content = fs::read_to_string(&status_path).unwrap_or_default();
-            let (sname, state, detail) = if let Some(s) = parse_status(&content) {
-                (s.session_name, s.state, s.detail)
-            } else {
-                (String::new(), "idle".to_string(), String::new())
-            };
+            let status = parse_status(&content).unwrap_or_else(|| StatusPayload {
+                state: "idle".to_string(),
+                ..Default::default()
+            });
             let alive = parse_claude_process(&content)
                 .map(|(pid, started)| is_same_process_running(pid, started));
             sessions.push(SessionInfo {
                 session_id: sid,
-                session_name: sname,
-                state,
-                detail,
+                session_name: status.session_name,
+                state: status.state,
+                detail: status.detail,
+                title: status.title,
+                branch: status.branch,
+                turn_started: status.turn_started,
+                state_since: status.state_since,
                 status_file: status_path.to_string_lossy().to_string(),
                 last_modified,
                 alive,
@@ -732,9 +747,7 @@ fn cmd_write_status(args: &[String]) {
     let session_id_arg = get_arg(args, "--session-id");
     let session_name_arg = get_arg(args, "--session-name");
 
-    let (event, tool, detail, session_id, session_name, launch_only) = if let Some(adapter_name) =
-        &adapter_name
-    {
+    let ev = if let Some(adapter_name) = &adapter_name {
         // Adapter mode: read stdin JSON
         debug_log(&log_path, "reading stdin...");
         let stdin_data = read_stdin();
@@ -750,18 +763,10 @@ fn cmd_write_status(args: &[String]) {
         let stdin: adapter::StdinInput = serde_json::from_str(&stdin_data).unwrap_or_default();
 
         if let Some(adapter) = adapter::get_adapter(adapter_name) {
-            if let Some(ev) = adapter.parse(&stdin) {
-                (
-                    ev.event,
-                    ev.tool,
-                    ev.detail,
-                    ev.session_id,
-                    ev.session_name,
-                    ev.launch_only,
-                )
-            } else {
+            let Some(ev) = adapter.parse(&stdin) else {
                 return;
-            }
+            };
+            ev
         } else {
             eprintln!("Unknown adapter: {}", adapter_name);
             std::process::exit(1);
@@ -775,7 +780,17 @@ fn cmd_write_status(args: &[String]) {
         } else {
             detail_arg
         };
-        (event, tool_arg, detail, sid, sname, false)
+        adapter::NormalizedEvent {
+            event,
+            tool: tool_arg,
+            detail,
+            session_id: sid,
+            session_name: sname,
+            launch_only: false,
+            prompt: None,
+            cwd: String::new(),
+            session_title: None,
+        }
     } else {
         eprintln!("Usage: claude-status-pet write-status --event <prompt|tool|done|error|offline> [--tool <name>] [--detail <text>] [--session-id <id>]");
         eprintln!(
@@ -785,13 +800,14 @@ fn cmd_write_status(args: &[String]) {
     };
 
     // Determine state from event + tool
-    let state = if event == "tool" && !tool.is_empty() {
-        status_map::tool_to_state(&tool)
+    let state = if ev.event == "tool" && !ev.tool.is_empty() {
+        status_map::tool_to_state(&ev.tool)
     } else {
-        status_map::event_to_state(&event)
+        status_map::event_to_state(&ev.event)
     };
+    let session_id = &ev.session_id;
 
-    if !is_safe_session_id(&session_id) {
+    if !is_safe_session_id(session_id) {
         eprintln!("Invalid session ID");
         std::process::exit(1);
     }
@@ -800,13 +816,22 @@ fn cmd_write_status(args: &[String]) {
 
     debug_log(
         &log_path,
-        &format!("writing state={} tool={} to {:?}", state, tool, status_file),
+        &format!(
+            "writing state={} tool={} to {:?}",
+            state, ev.tool, status_file
+        ),
     );
+    let previous: Option<serde_json::Value> = fs::read_to_string(&status_file)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok());
+    let still_delegating = previous
+        .as_ref()
+        .is_some_and(|v| v["state"].as_str() == Some("delegating"));
 
     // launch_only: don't write status (e.g. Copilot sessionStart — GUI launch handled by hook script)
-    if launch_only {
+    if ev.launch_only {
         debug_log(&log_path, "launch_only — skipping status write");
-    } else if event == "subagent_done" && !is_still_delegating(&status_file) {
+    } else if ev.event == "subagent_done" && !still_delegating {
         // A background sub-agent can finish after the main turn already ended (Stop wrote idle)
         // or moved on to other tools; switching to thinking then would stick with nothing running.
         debug_log(
@@ -815,13 +840,23 @@ fn cmd_write_status(args: &[String]) {
         );
     } else {
         // Lets the aggregate pet drop a session whose Claude process died without a SessionEnd hook
-        let claude_process = current_claude_process(&status_file);
+        let claude_process = current_claude_process(previous.as_ref());
+        let meta = session_meta::next_meta(
+            previous.as_ref(),
+            ev.prompt.as_deref(),
+            ev.session_title.as_deref(),
+            state,
+            unix_millis(),
+            || session_meta::git_branch(&ev.cwd),
+        );
         let status = serde_json::json!({
-            "state": state, "detail": detail, "tool": tool,
-            "event": event, "session_id": session_id,
-            "session_name": session_name, "timestamp": timestamp(),
+            "state": state, "detail": ev.detail, "tool": ev.tool,
+            "event": ev.event, "session_id": session_id,
+            "session_name": ev.session_name, "timestamp": timestamp(),
             "claude_pid": claude_process.map(|(pid, _)| pid),
-            "claude_started": claude_process.map(|(_, started)| started)
+            "claude_started": claude_process.map(|(_, started)| started),
+            "title": meta.title, "branch": meta.branch,
+            "turn_started": meta.turn_started, "state_since": meta.state_since
         });
         write_status_file(&status_file, &status.to_string());
     }
@@ -857,10 +892,6 @@ fn write_status_file(status_file: &Path, content: &str) {
 
 fn is_temp_status_file_name(name: &str) -> bool {
     name.starts_with(".status-") && name.ends_with(".tmp")
-}
-
-fn is_still_delegating(status_file: &Path) -> bool {
-    read_status(status_file).is_some_and(|status| status.state == "delegating")
 }
 
 fn cleanup_stale_status(pet_dir: &PathBuf) {
@@ -1256,6 +1287,13 @@ fn default_pet_dir() -> PathBuf {
     home.join(".claude").join("pet-data")
 }
 
+fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 fn timestamp() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1445,6 +1483,7 @@ pub fn run() {
                                 event: "Demo".to_string(),
                                 session_id: "demo".to_string(),
                                 session_name: "Demo Mode".to_string(),
+                                ..Default::default()
                             },
                         );
                         i += 1;
