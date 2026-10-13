@@ -564,6 +564,29 @@ fn test_vscode_session_name_has_suffix() {
     assert!(ev.session_name.contains("my-app"));
 }
 
+// ── write-status tests ──
+
+#[test]
+fn test_format_utc_timestamp() {
+    assert_eq!(crate::format_utc_timestamp(0), "1970-01-01T00:00:00Z");
+    assert_eq!(
+        crate::format_utc_timestamp(951782400),
+        "2000-02-29T00:00:00Z"
+    );
+    assert_eq!(
+        crate::format_utc_timestamp(1735689599),
+        "2024-12-31T23:59:59Z"
+    );
+    assert_eq!(
+        crate::format_utc_timestamp(1791860142),
+        "2026-10-13T02:55:42Z"
+    );
+    assert_eq!(
+        crate::format_utc_timestamp(4107585600),
+        "2100-03-01T12:00:00Z"
+    );
+}
+
 // ── Helper ──
 
 fn make_stdin(

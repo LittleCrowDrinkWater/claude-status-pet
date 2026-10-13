@@ -1237,26 +1237,46 @@ fn default_pet_dir() -> PathBuf {
 }
 
 fn timestamp() -> String {
-    // ISO 8601 UTC timestamp
-    let d = std::time::SystemTime::now()
+    let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = d.as_secs();
-    // Simple UTC format without chrono dependency
-    let days = secs / 86400;
+        .unwrap_or_default()
+        .as_secs();
+    format_utc_timestamp(secs)
+}
+
+/// ISO 8601 UTC timestamp for a Unix time, without a chrono dependency.
+fn format_utc_timestamp(secs: u64) -> String {
+    let (year, month, day) = civil_from_days(secs / 86400);
     let time_secs = secs % 86400;
-    let h = time_secs / 3600;
-    let m = (time_secs % 3600) / 60;
-    let s = time_secs % 60;
-    // Approximate date (good enough for timestamps)
-    let y = 1970 + days / 365;
-    let remaining = days % 365;
-    let month = remaining / 30 + 1;
-    let day = remaining % 30 + 1;
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y, month, day, h, m, s
+        year,
+        month,
+        day,
+        time_secs / 3600,
+        (time_secs % 3600) / 60,
+        time_secs % 60
     )
+}
+
+/// Gregorian date for a day count since 1970-01-01 (Howard Hinnant's civil_from_days).
+/// Shifts the year to start in March so the leap day falls at the end of a 400-year era.
+fn civil_from_days(days: u64) -> (u64, u64, u64) {
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let day_of_era = z % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = year_of_era + era * 400 + u64::from(month <= 2);
+    (year, month, day)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
