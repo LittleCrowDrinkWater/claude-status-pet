@@ -56,6 +56,7 @@ claude-status-pet/
 │   │   ├── index.html
 │   │   ├── style.css
 │   │   ├── app.js           # Character rendering, status updates, 2-level right-click menu
+│   │   ├── scene.js         # Ferris desk scene: desk slides in, laptop screen shows the busy state
 │   │   └── ferris/          # Ferris SVG art + character.json
 │   └── src-tauri/           # Rust backend
 │       ├── src/

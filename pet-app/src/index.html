@@ -14,8 +14,44 @@
     <div id="speech-bubble" class="hidden">
       <span id="status-text"></span>
     </div>
-    <div id="ferris-wrapper">
-      <img id="ferris-img" src="ferris/1.svg" alt="Ferris" draggable="false">
+    <div id="pet-stage">
+      <div id="ferris-wrapper">
+        <img id="ferris-img" src="ferris/1.svg" alt="Ferris" draggable="false">
+      </div>
+      <svg id="desk-scene" viewBox="0 0 140 64" aria-hidden="true">
+        <g id="desk">
+          <rect class="desk-leg" x="14" y="36" width="7" height="28" rx="2"/>
+          <rect class="desk-leg" x="119" y="36" width="7" height="28" rx="2"/>
+          <rect class="desk-top" x="2" y="29" width="136" height="9" rx="3"/>
+        </g>
+        <g id="laptop" transform="translate(40 7) scale(0.75)">
+          <path class="laptop-base" d="M42 29 L98 29 L94 25 L46 25 Z"/>
+          <g id="laptop-lid">
+            <rect class="laptop-shell" x="48" y="1" width="44" height="25" rx="3"/>
+            <rect class="laptop-screen" x="51" y="4" width="38" height="19" rx="1.5"/>
+            <g class="screen-icon icon-thinking">
+              <circle cx="63" cy="13.5" r="1.8"/><circle cx="70" cy="13.5" r="1.8"/><circle cx="77" cy="13.5" r="1.8"/>
+            </g>
+            <g class="screen-icon icon-reading">
+              <rect x="56" y="8" width="28" height="2" rx="1"/><rect x="56" y="12.5" width="22" height="2" rx="1"/><rect x="56" y="17" width="25" height="2" rx="1"/>
+            </g>
+            <g class="screen-icon icon-editing">
+              <rect x="56" y="8" width="20" height="2" rx="1"/><rect x="56" y="12.5" width="14" height="2" rx="1"/><rect class="screen-cursor" x="72" y="11" width="2" height="5"/>
+            </g>
+            <g class="screen-icon icon-searching">
+              <circle cx="68" cy="12.5" r="4.5" fill="none" stroke-width="2"/><path d="M71.5 16 L76 20.5" stroke-width="2.4" stroke-linecap="round"/>
+            </g>
+            <g class="screen-icon icon-running">
+              <path d="M57 9 L62 13.5 L57 18" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="65" y="17" width="9" height="2" rx="1"/>
+            </g>
+            <g class="screen-icon icon-delegating">
+              <rect x="57" y="8" width="10" height="7" rx="1.5"/><rect x="71" y="12" width="10" height="7" rx="1.5"/>
+            </g>
+            <g class="screen-icon icon-waiting"><text x="70" y="19" text-anchor="middle">?</text></g>
+            <g class="screen-icon icon-error"><text x="70" y="19" text-anchor="middle">!</text></g>
+          </g>
+        </g>
+      </svg>
     </div>
     <pre id="ascii-art" style="display:none;"></pre>
     <div id="session-name"></div>
@@ -23,6 +59,7 @@
   </div>
   <div id="menu-backdrop" class="hidden"></div>
   <div id="char-menu" class="hidden"></div>
+  <script src="scene.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -185,6 +185,7 @@ let petFontSize = parseInt(localStorage.getItem('petFontSize') || '16');
 let petScale = parseFloat(localStorage.getItem('petScale') || '1');
 let petMotion = localStorage.getItem('petMotion') !== 'off';
 let petSpeech = localStorage.getItem('petSpeech') !== 'off';
+let petDeskScene = localStorage.getItem('petDeskScene') !== 'off';
 let currentState = 'idle';
 let currentImgSrc = '';
 let requestedImgSrc = '';
@@ -422,7 +423,8 @@ function playStateAnimation(state) {
   currentState = state;
   // A quick second change would otherwise let an older timer apply the previous state's animation
   clearTimeout(stateAnimTimeout);
-  if (groupChanged) {
+  const deskHandled = playDeskScene(state);
+  if (groupChanged && !deskHandled) {
     container.className = 'anim-appear';
     appearUntil = Date.now() + APPEAR_MS;
   }
@@ -685,6 +687,12 @@ function buildConfigPage() {
     rerenderAggregate();
     buildMenu();
   });
+  addMenuItem(charMenu, 'Desk scene: ' + (petDeskScene ? 'On' : 'Off') + (mode === 'ferris' ? '' : ' (Ferris only)'), () => {
+    petDeskScene = !petDeskScene;
+    saveConfig('petDeskScene', petDeskScene ? 'on' : 'off');
+    syncDeskScene(currentState);
+    buildMenu();
+  });
   addMenuItem(charMenu, 'Reset Position', () => {
     closeMenu();
     if (window.__TAURI__) moveToDefaultCorner().catch(() => {});
@@ -725,12 +733,13 @@ function buildConfigPage() {
   });
   addDivider(charMenu);
   addMenuItem(charMenu, 'Reset Default', () => {
-    petScale = 1; petTextColor = ''; petSessionBg = ''; petFillColor = ''; petBgColor = ''; petMotion = true; petSpeech = true;
+    petScale = 1; petTextColor = ''; petSessionBg = ''; petFillColor = ''; petBgColor = ''; petMotion = true; petSpeech = true; petDeskScene = true;
     localStorage.removeItem('petScale'); localStorage.removeItem('petTextColor');
     localStorage.removeItem('petSessionBg'); localStorage.removeItem('petFillColor');
     localStorage.removeItem('petBgColor'); localStorage.removeItem('petMotion');
-    localStorage.removeItem('petSpeech');
+    localStorage.removeItem('petSpeech'); localStorage.removeItem('petDeskScene');
     applyConfig();
+    syncDeskScene(currentState);
     rerenderAggregate();
     buildConfigPage();
   }, 'menu-item-danger');
@@ -795,6 +804,7 @@ async function selectChar(newMode) {
 
   // Show the character immediately with whatever is available
   updateStatus({ state: currentState, detail: statusText.textContent });
+  syncDeskScene(currentState);
 
   // Preload remaining assets in the background
   if (GIF_MODES[mode] && hasExternalAssets) {

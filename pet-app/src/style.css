@@ -126,6 +126,75 @@ body:not(.placed) {
   transition: opacity 0.2s ease;
 }
 
+/* Desk scene (scene.js). It sits outside #ferris-wrapper so the per-state wiggle moves only the
+   pet, and stays invisible until scene.js animates it in. */
+#pet-stage {
+  position: relative;
+}
+
+#desk-scene {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.desk-top { fill: #c08457; }
+.desk-leg { fill: #8a5a36; }
+.laptop-base { fill: #9ca3af; }
+.laptop-shell { fill: #4b5563; }
+.laptop-screen { fill: #1f2937; }
+
+/* Hinge at the bottom edge of the lid */
+#laptop-lid {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+
+.screen-icon {
+  display: none;
+  fill: #7dd3fc;
+}
+
+.screen-icon [stroke-width] {
+  stroke: #7dd3fc;
+}
+
+.screen-icon text {
+  font: bold 15px 'Segoe UI', sans-serif;
+}
+
+#desk-scene[data-screen="thinking"] .icon-thinking,
+#desk-scene[data-screen="reading"] .icon-reading,
+#desk-scene[data-screen="editing"] .icon-editing,
+#desk-scene[data-screen="searching"] .icon-searching,
+#desk-scene[data-screen="running"] .icon-running,
+#desk-scene[data-screen="delegating"] .icon-delegating,
+#desk-scene[data-screen="waiting"] .icon-waiting,
+#desk-scene[data-screen="error"] .icon-error {
+  display: inline;
+}
+
+.icon-waiting { fill: #facc15; }
+.icon-error { fill: #fecaca; }
+#desk-scene[data-screen="error"] .laptop-screen { fill: #991b1b; }
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.screen-cursor, .icon-waiting {
+  animation: blink 1s steps(1) infinite;
+}
+
+body.no-motion .screen-cursor, body.no-motion .icon-waiting {
+  animation: none;
+}
+
 /* Session name */
 #session-name {
   font-size: 12px;
