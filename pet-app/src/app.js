@@ -482,8 +482,11 @@ function updateStatus(status) {
 
   // Before the character: the ASCII frame speed is read from currentState
   playStateAnimation(state);
-  // Sprites at the same desk swap without the fade, which would blink the whole desk
-  if (!sceneOwnsSprite()) renderCharacter(state, sceneIsSeated());
+  // Sprites at the same desk cross-fade; the usual fade through transparent would blink the whole desk
+  if (!sceneOwnsSprite()) {
+    if (sceneIsSeated()) crossfadeSeatedSwap(state);
+    else renderCharacter(state);
+  }
 
   stateLabel.textContent = state;
   bubble.classList.toggle('thought', WORKING_STATES.has(state));

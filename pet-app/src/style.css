@@ -126,20 +126,25 @@ body:not(.placed) {
   transition: opacity 0.2s ease;
 }
 
-/* Desk layer of a character pack scene (scene.js). It sits outside #ferris-wrapper so a
-   per-state wiggle never moves it, and stays invisible until scene.js slides it in. */
+/* Character pack desk scene (scene.js). The layers sit outside #ferris-wrapper so a per-state
+   wiggle never moves them, and stay invisible until scene.js animates them. */
 #pet-stage {
   position: relative;
 }
 
-#desk-layer {
+/* Stacked over the sprite: the previous frame fading out, then the desk. The holder fades the
+   desk out while the desk layer itself may still be finishing its slide. */
+#fade-layer, #desk-holder, #desk-layer {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
+  pointer-events: none;
+}
+
+#fade-layer, #desk-layer {
   object-fit: contain;
   opacity: 0;
-  pointer-events: none;
 }
 
 /* Session name */

@@ -92,6 +92,7 @@ Create `<pack-dir>/character.json`:
   - Entering a seated state from a standing one: `desk` (a full-size transparent image holding only the desk, drawn at exactly the position it has in the seated images) slides in from the right over the standing image, then `sit_down` and `open_laptop` play once, then the state's own image loops. `offline` skips `open_laptop`.
   - Leaving plays the same frames backwards and slides the desk out, so there is no separate stand-up animation. A state change midway turns the playback around at the current frame. The desk stays at least 2 seconds.
   - Transition frames are single PNGs, not APNG: the app has to play them backwards and stop them midway.
+  - Every frame change cross-fades over 110ms, and the first `sit_down` frame takes over when the desk slide is 80% done. Give each frame at least about 120ms; uneven timing (slower at the start and end of the move) reads more natural than equal steps.
   - `open_laptop` is optional. Right-click → Settings → Desk scene turns the scene off.
 
 ## Step 4: Verify
