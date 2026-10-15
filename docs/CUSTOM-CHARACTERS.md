@@ -77,6 +77,22 @@ Create `<pack-dir>/character.json`:
 - Each state value is an **array** of paths (for random variety)
 - `name` is what appears in the right-click menu
 - Optional `"motion": "none"` turns off the app's per-state CSS motion (float, wiggle, pulse) for this character. Use it when the images are frame animations (animated GIF or APNG saved as `.png`) that already express each state, so the two motions don't stack. Users can also turn motion off for every character via right-click → Settings → Motion.
+- Optional `"scene"` makes the character sit down at a desk while it works, instead of jumping between standing and seated images:
+
+  ```json
+  "scene": {
+    "seated_states": ["thinking", "reading", "editing", "searching", "running", "delegating", "offline"],
+    "desk": "my-pet/desk.png",
+    "desk_slide_ms": 400,
+    "sit_down":    { "frames": ["my-pet/sit-down/frame-01.png", "my-pet/sit-down/frame-02.png"], "durations": [180, 180] },
+    "open_laptop": { "frames": ["my-pet/open-laptop/frame-01.png"], "durations": [150] }
+  }
+  ```
+
+  - Entering a seated state from a standing one: `desk` (a full-size transparent image holding only the desk, drawn at exactly the position it has in the seated images) slides in from the right over the standing image, then `sit_down` and `open_laptop` play once, then the state's own image loops. `offline` skips `open_laptop`.
+  - Leaving plays the same frames backwards and slides the desk out, so there is no separate stand-up animation. A state change midway turns the playback around at the current frame. The desk stays at least 2 seconds.
+  - Transition frames are single PNGs, not APNG: the app has to play them backwards and stop them midway.
+  - `open_laptop` is optional. Right-click → Settings → Desk scene turns the scene off.
 
 ## Step 4: Verify
 

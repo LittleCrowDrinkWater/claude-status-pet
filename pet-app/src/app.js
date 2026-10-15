@@ -142,6 +142,8 @@ const STATIC_MOTION_PACKS = new Set();
 function registerCharacter(id, jsonStr) {
   const config = JSON.parse(jsonStr);
   GIF_MODES[id] = config.states;
+  if (config.scene) CHARACTER_SCENES[id] = config.scene;
+  else delete CHARACTER_SCENES[id];
   if (config.motion === 'none') STATIC_MOTION_PACKS.add(id);
   else STATIC_MOTION_PACKS.delete(id);
 }
@@ -339,18 +341,24 @@ function showAscii() {
   asciiPre.style.display = 'block';
 }
 
-function setImage(src) {
+function setImage(src, instant = false) {
   requestedImgSrc = src;
   // Not preloaded yet: load it, then show it unless another state asked for a different image meanwhile
   if (!assetCache[src] && !missingAssets.has(src) && hasExternalAssets && window.__TAURI__) {
     loadAsset(src).then(() => {
-      if (requestedImgSrc === src) setImage(src);
+      if (requestedImgSrc === src) setImage(src, instant);
     });
     return;
   }
   // A missing asset falls back to the copy bundled with the frontend (Ferris ships in ferris/)
   const resolved = assetCache[src] || src;
   if (resolved === currentImgSrc) return;
+  if (instant) {
+    imgEl.src = resolved;
+    imgEl.style.opacity = '1';
+    currentImgSrc = resolved;
+    return;
+  }
   imgEl.style.opacity = '0';
   setTimeout(() => {
     imgEl.src = resolved;
@@ -438,18 +446,18 @@ function playStateAnimation(state) {
 
 // Keeps the sprite while only the detail changes; picking a new random one on every tool call
 // swapped the picture each time the pet read another file.
-function renderCharacter(state) {
+function renderCharacter(state, instant = false) {
   const key = mode + '|' + state;
   if (key === spriteKey) return;
   spriteKey = key;
   if (mode === 'ferris') {
     showImage();
     const sprites = FERRIS_SVG_MAP[state] || FERRIS_SVG_MAP.idle;
-    setImage(pickRandom(sprites));
+    setImage(pickRandom(sprites), instant);
   } else if (GIF_MODES[mode]) {
     showImage();
     const map = GIF_MODES[mode];
-    setImage(pickRandom(map[state] || map.idle));
+    setImage(pickRandom(map[state] || map.idle), instant);
   } else {
     showAscii();
     const species = ASCII_SPECIES[mode];
@@ -474,7 +482,8 @@ function updateStatus(status) {
 
   // Before the character: the ASCII frame speed is read from currentState
   playStateAnimation(state);
-  renderCharacter(state);
+  // Sprites at the same desk swap without the fade, which would blink the whole desk
+  if (!sceneOwnsSprite()) renderCharacter(state, sceneIsSeated());
 
   stateLabel.textContent = state;
   bubble.classList.toggle('thought', WORKING_STATES.has(state));
@@ -687,7 +696,7 @@ function buildConfigPage() {
     rerenderAggregate();
     buildMenu();
   });
-  addMenuItem(charMenu, 'Desk scene: ' + (petDeskScene ? 'On' : 'Off') + (mode === 'ferris' ? '' : ' (Ferris only)'), () => {
+  addMenuItem(charMenu, 'Desk scene: ' + (petDeskScene ? 'On' : 'Off') + (CHARACTER_SCENES[mode] ? '' : ' (not in this character)'), () => {
     petDeskScene = !petDeskScene;
     saveConfig('petDeskScene', petDeskScene ? 'on' : 'off');
     syncDeskScene(currentState);
@@ -1265,6 +1274,7 @@ async function preloadAssets() {
   applyConfig();
   // The sprite maps were still the bundled defaults when the first status arrived
   spriteKey = '';
+  syncDeskScene(currentState);
   if (aggregateMode) {
     // Character packs finished loading after the first aggregate render; draw again with them
     rerenderAggregate();
