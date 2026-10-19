@@ -6,7 +6,7 @@ Want to add a new character to Claude Status Pet? Here's how.
 
 | Format | Example | Config | Best for |
 |--------|---------|--------|----------|
-| **SVG images** | Ferris, Go Gopher | `character.json` in bundled frontend or DLC | Detailed vector illustrations |
+| **SVG images** | Go Gopher | `character.json` in bundled frontend or DLC | Detailed vector illustrations |
 | **GIF animations** | Mona, Kuromi | `character.json` in assets dir | Animated mascots, stickers |
 | **PNG images** | Fluent Emoji, Fluent Cat | `character.json` in assets dir | 3D rendered emoji |
 | **ASCII art** | Chonk, Cat, Ghost | Hardcoded in `app.js` | Lightweight text art |
@@ -60,7 +60,7 @@ Multiple images per state adds variety — the app randomly picks one each time.
 
 ## Adding a Bundled SVG Character
 
-For characters bundled with the app (like Ferris):
+For characters bundled with the app's frontend (none ship today):
 
 1. Create a directory: `pet-app/src/mychar/`
 2. Add SVG files: `mychar/1.svg`, `mychar/2.svg`, etc.

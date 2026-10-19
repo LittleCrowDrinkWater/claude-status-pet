@@ -90,9 +90,6 @@ SYSTEM LIBRARIES (dynamically linked at runtime, not bundled)
 
 BUNDLED ASSETS
 
-- Ferris SVG art: CC0-1.0 (Public Domain)
-  The Rust mascot Ferris, used under Creative Commons Zero.
-
 - Mona / Kuromi GIFs: NOT bundled in this repository.
   Downloaded at runtime from GIPHY. Subject to GIPHY Terms of Service.
   https://developers.giphy.com/docs/sdk#terms

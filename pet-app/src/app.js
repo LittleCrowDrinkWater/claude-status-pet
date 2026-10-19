@@ -5,8 +5,8 @@ const statusText = document.getElementById('status-text');
 const stateLabel = document.getElementById('state-label');
 const sessionNameEl = document.getElementById('session-name');
 const container = document.getElementById('pet-container');
-const imgWrapper = document.getElementById('ferris-wrapper');
-const imgEl = document.getElementById('ferris-img');
+const imgWrapper = document.getElementById('sprite-wrapper');
+const imgEl = document.getElementById('sprite-img');
 const asciiPre = document.getElementById('ascii-art');
 const charMenu = document.getElementById('char-menu');
 const menuBackdrop = document.getElementById('menu-backdrop');
@@ -160,14 +160,8 @@ async function loadCharacter(id) {
   }
 }
 
-// Ferris SVG map loaded from character.json (populated at init, fallback to hardcoded)
-let FERRIS_SVG_MAP = {
-  idle: ['ferris/1.svg'], thinking: ['ferris/3.svg', 'ferris/14.svg'],
-  reading: ['ferris/10.svg'], editing: ['ferris/19.svg'],
-  searching: ['ferris/20.svg'], running: ['ferris/2.svg'],
-  delegating: ['ferris/15.svg'], waiting: ['ferris/5.svg'],
-  error: ['ferris/9.svg'], offline: ['ferris/7.svg'], unknown: ['ferris/1.svg'],
-};
+// Drawn in code, so it works before any DLC or character pack is installed
+const DEFAULT_MODE = 'chonk';
 
 const ASCII_ANIM_SPEED = {
   working: 300, editing: 300, running: 300,
@@ -176,7 +170,7 @@ const ASCII_ANIM_SPEED = {
 const DEFAULT_ANIM_SPEED = 800;
 
 // ── State ──
-let mode = localStorage.getItem('petMode') || 'ferris';
+let mode = localStorage.getItem('petMode') || DEFAULT_MODE;
 let eye = localStorage.getItem('petEye') || '·';
 let petColor = localStorage.getItem('petColor') || '';
 let petBgColor = localStorage.getItem('petBgColor') || '';
@@ -350,7 +344,7 @@ function setImage(src, instant = false) {
     });
     return;
   }
-  // A missing asset falls back to the copy bundled with the frontend (Ferris ships in ferris/)
+  // Without a cached data URL the path is tried relative to the frontend; a miss shows the 404 art below
   const resolved = assetCache[src] || src;
   if (resolved === currentImgSrc) return;
   if (instant) {
@@ -450,11 +444,7 @@ function renderCharacter(state, instant = false) {
   const key = mode + '|' + state;
   if (key === spriteKey) return;
   spriteKey = key;
-  if (mode === 'ferris') {
-    showImage();
-    const sprites = FERRIS_SVG_MAP[state] || FERRIS_SVG_MAP.idle;
-    setImage(pickRandom(sprites), instant);
-  } else if (GIF_MODES[mode]) {
+  if (GIF_MODES[mode]) {
     showImage();
     const map = GIF_MODES[mode];
     setImage(pickRandom(map[state] || map.idle), instant);
@@ -616,10 +606,6 @@ function buildMenu() {
     addMenuItem(charMenu, 'Sessions (' + summary + ') ▸', () => { menuPage = 'sessions'; buildMenu(); });
     addDivider(charMenu);
   }
-
-  // Bundled: Ferris
-  addMenuItem(charMenu, 'Ferris (SVG)', () => selectChar('ferris'), mode === 'ferris' ? 'active' : '');
-  addDivider(charMenu);
 
   // ASCII Buddies → submenu
   const asciiActive = Object.keys(ASCII_SPECIES).includes(mode);
@@ -1196,8 +1182,6 @@ async function preloadAssets() {
   let paths = [];
   if (GIF_MODES[mode]) {
     for (const gifs of Object.values(GIF_MODES[mode])) for (const g of gifs) paths.push(g);
-  } else if (mode === 'ferris') {
-    for (const svgs of Object.values(FERRIS_SVG_MAP)) for (const s of svgs) paths.push(s);
   }
   await Promise.all([...new Set(paths)].map(p => loadAsset(p)));
 }
@@ -1210,15 +1194,6 @@ async function preloadAssets() {
   if (window.__TAURI__) {
     try { appVersion = await window.__TAURI__.app.getVersion(); } catch(e) {}
   }
-
-  // Load Ferris character.json (bundled with frontend)
-  try {
-    const resp = await fetch('ferris/character.json');
-    if (resp.ok) {
-      const config = await resp.json();
-      FERRIS_SVG_MAP = config.states;
-    }
-  } catch(e) {}
 
   // Discover DLC and custom characters
   if (window.__TAURI__) {
@@ -1256,16 +1231,16 @@ async function preloadAssets() {
         throw new Error('character.json not found after download');
       }
     } catch(e) {
-      statusText.textContent = 'Download failed, using Ferris';
-      mode = 'ferris';
+      statusText.textContent = 'Download failed, using ' + ASCII_SPECIES[DEFAULT_MODE].name;
+      mode = DEFAULT_MODE;
       localStorage.setItem('petMode', mode);
     }
   }
 
-  // Fallback: if mode is not a recognized character, reset to ferris
-  const knownMode = mode === 'ferris' || GIF_MODES[mode] || ASCII_SPECIES[mode] || customPacks.some(p => p.id === mode);
+  // Fallback: the saved mode may name a character that is no longer available, reset to the default
+  const knownMode = GIF_MODES[mode] || ASCII_SPECIES[mode] || customPacks.some(p => p.id === mode);
   if (!knownMode) {
-    mode = 'ferris';
+    mode = DEFAULT_MODE;
     localStorage.setItem('petMode', mode);
   }
 

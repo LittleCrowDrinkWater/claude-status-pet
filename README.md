@@ -103,7 +103,6 @@ Claude Code ──钩子──▶ write-status ──▶ status-<会话ID>.json 
 ## 致谢
 
 - 上游项目：[moeyui1/claude-status-pet](https://github.com/moeyui1/claude-status-pet)
-- **Ferris**：[free-ferris-pack](https://github.com/MariaLetta/free-ferris-pack)，Maria Letta（CC0）
 - **Go Gopher**：[gophers](https://github.com/egonelbre/gophers)，Egon Elbre（CC0），原始设计 Renee French
 - **Fluent Emoji**：[fluentui-emoji](https://github.com/microsoft/fluentui-emoji)，Microsoft（MIT）
 - **Mona**：[GitHub on GIPHY](https://giphy.com/GitHub)（运行时下载）

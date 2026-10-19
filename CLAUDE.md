@@ -57,7 +57,6 @@ claude-status-pet/
 │   │   ├── style.css
 │   │   ├── app.js           # Character rendering, status updates, 2-level right-click menu
 │   │   ├── scene.js         # Pack desk scene: desk layer slides in, sit-down frames play forwards or backwards
-│   │   └── ferris/          # Ferris SVG art + character.json
 │   └── src-tauri/           # Rust backend
 │       ├── src/
 │       │   ├── lib.rs       # GUI mode + write-status CLI + DLC download + assets auto-download
@@ -136,7 +135,7 @@ All `truncate()` functions use `is_char_boundary()` to avoid UTF-8 panics.
 
 Characters defined by `character.json` files:
 
-- **Bundled**: `pet-app/src/ferris/character.json`
+- **Bundled**: no image character; the default and fallback is the ASCII buddy `chonk` (`DEFAULT_MODE` in app.js)
 - **DLC**: `~/.claude/pet-data/assets/{mona,kuromi,gopher,fluent-emoji,...}/character.json` (downloaded by `download_dlc` Rust command using `ureq` HTTP client)
 - **Custom**: `~/.claude/pet-data/characters/*/character.json` (user-installed packs)
 
@@ -189,7 +188,6 @@ All hook processing and DLC download in Rust (using `ureq` for HTTP). No Node.js
 - Event name from `--copilot-event` CLI arg (stdin may not have `hookEventName`)
 
 ### Image licensing
-- **Ferris SVGs** (CC0) are bundled in the repo
 - **Go Gopher SVGs** (CC0) from egonelbre/gophers — downloaded at runtime via `download_dlc`
 - **Fluent Emoji PNGs** (MIT) from microsoft/fluentui-emoji — downloaded at runtime via `download_dlc`
 - **Mona/Kuromi GIFs** (GIPHY) are NOT in the repo — downloaded at runtime via `download_dlc`

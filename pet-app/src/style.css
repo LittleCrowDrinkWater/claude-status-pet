@@ -105,8 +105,8 @@ body:not(.placed) {
   text-overflow: ellipsis;
 }
 
-/* Ferris image */
-#ferris-wrapper {
+/* Character image */
+#sprite-wrapper {
   width: 140px;
   height: 140px;
   display: flex;
@@ -115,18 +115,18 @@ body:not(.placed) {
   cursor: grab;
 }
 
-#ferris-wrapper:active {
+#sprite-wrapper:active {
   cursor: grabbing;
 }
 
-#ferris-img {
+#sprite-img {
   width: 100%;
   height: 100%;
   object-fit: contain;
   transition: opacity 0.2s ease;
 }
 
-/* Character pack desk scene (scene.js). The layers sit outside #ferris-wrapper so a per-state
+/* Character pack desk scene (scene.js). The layers sit outside #sprite-wrapper so a per-state
    wiggle never moves them, and stay invisible until scene.js animates them. */
 #pet-stage {
   position: relative;
@@ -243,31 +243,31 @@ body:not(.placed) {
   100% { transform: scale(1) rotate(0deg); opacity: 1; }
 }
 
-.anim-idle #ferris-wrapper, .anim-idle #ascii-art {
+.anim-idle #sprite-wrapper, .anim-idle #ascii-art {
   animation: float 3s ease-in-out infinite;
 }
 
-.anim-thinking #ferris-wrapper, .anim-thinking #ascii-art {
+.anim-thinking #sprite-wrapper, .anim-thinking #ascii-art {
   animation: think 2s ease-in-out infinite;
 }
 
-.anim-reading #ferris-wrapper, .anim-reading #ascii-art {
+.anim-reading #sprite-wrapper, .anim-reading #ascii-art {
   animation: float 2s ease-in-out infinite;
 }
 
-.anim-editing #ferris-wrapper, .anim-editing #ascii-art {
+.anim-editing #sprite-wrapper, .anim-editing #ascii-art {
   animation: wiggle 0.6s ease-in-out infinite;
 }
 
-.anim-searching #ferris-wrapper, .anim-searching #ascii-art {
+.anim-searching #sprite-wrapper, .anim-searching #ascii-art {
   animation: think 1.2s ease-in-out infinite;
 }
 
-.anim-running #ferris-wrapper, .anim-running #ascii-art {
+.anim-running #sprite-wrapper, .anim-running #ascii-art {
   animation: wiggle 0.4s ease-in-out infinite;
 }
 
-.anim-delegating #ferris-wrapper, .anim-delegating #ascii-art {
+.anim-delegating #sprite-wrapper, .anim-delegating #ascii-art {
   animation: delegate 1.5s ease-in-out infinite;
 }
 
@@ -276,24 +276,24 @@ body:not(.placed) {
   50% { transform: scale(1.06); }
 }
 
-.anim-waiting #ferris-wrapper, .anim-waiting #ascii-art {
+.anim-waiting #sprite-wrapper, .anim-waiting #ascii-art {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
-.anim-error #ferris-wrapper, .anim-error #ascii-art {
+.anim-error #sprite-wrapper, .anim-error #ascii-art {
   animation: wiggle 0.3s ease-in-out 3;
 }
 
-.anim-offline #ferris-wrapper, .anim-offline #ascii-art {
+.anim-offline #sprite-wrapper, .anim-offline #ascii-art {
   animation: sleep 3s ease-in-out infinite;
 }
 
-.anim-appear #ferris-wrapper, .anim-appear #ascii-art {
+.anim-appear #sprite-wrapper, .anim-appear #ascii-art {
   animation: pop-in 0.4s ease-out forwards;
 }
 
 /* Motion off (Settings toggle or pack "motion": "none"): body class outranks the .anim-* rules above */
-body.no-motion #ferris-wrapper, body.no-motion #ascii-art {
+body.no-motion #sprite-wrapper, body.no-motion #ascii-art {
   animation: none;
 }
 

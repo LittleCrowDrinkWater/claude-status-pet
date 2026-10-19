@@ -6,6 +6,6 @@
     "name": "moeyui1"
   },
   "license": "MIT",
-  "keywords": ["status", "desktop-pet", "ferris", "mona", "hooks"],
+  "keywords": ["status", "desktop-pet", "mona", "hooks"],
   "skills": "./skills/"
 }

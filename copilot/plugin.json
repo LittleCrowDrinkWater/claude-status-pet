@@ -7,7 +7,7 @@
   },
   "repository": "https://github.com/moeyui1/claude-status-pet",
   "license": "AGPL-3.0-only",
-  "keywords": ["status", "desktop-pet", "ferris", "mona", "hooks"],
+  "keywords": ["status", "desktop-pet", "mona", "hooks"],
   "hooks": "hooks.json",
   "skills": "skills/"
 }

@@ -20,17 +20,11 @@ jobs:
         with:
           lfs: true
 
-      - name: Download Ferris SVGs (CC0 licensed)
-        run: |
-          mkdir -p assets/ferris
-          for i in $(seq 1 50); do
-            curl -sL "https://raw.githubusercontent.com/MariaLetta/free-ferris-pack/main/illustrations/svg/$i.svg" -o "assets/ferris/$i.svg"
-          done
-
       - name: Create asset zip
         run: |
+          mkdir -p assets
           cp -r dlc/ assets/dlc/
-          cd assets && zip -r ../pet-assets.zip ferris/ dlc/
+          cd assets && zip -r ../pet-assets.zip dlc/
 
       - name: Upload asset zip
         uses: softprops/action-gh-release@v2.6.1

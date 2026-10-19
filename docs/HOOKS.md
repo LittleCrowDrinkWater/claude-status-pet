@@ -97,19 +97,19 @@ VS Code agent mode hooks — PascalCase events from stdin `hookEventName`.
 
 All states the pet can display, with their visual behavior:
 
-| State | Animation | Label Color | Ferris Sprite | Trigger |
-|---|---|---|---|---|
-| `idle` | gentle float | orange | 1 | Stop / Done |
-| `thinking` | slow tilt | yellow | 3, 14 | Prompt submitted |
-| `reading` | fast float | blue | 10 | Read, WebFetch |
-| `editing` | wiggle | green | 19 | Edit, Write |
-| `searching` | fast tilt | purple | 20 | Grep, Glob, WebSearch |
-| `running` | fast wiggle | orange | 2 | Bash, terminal, MCP tools |
-| `delegating` | side bounce | blue | 15 | Agent, Skill, SubagentStart |
-| `waiting` | pulse | orange | 5 | Permission prompt |
-| `error` | shake 3× | red | 9 | StopFailure, errorOccurred |
-| `offline` | slow breathing | grey | 7 | timeout/unknown sessionEnd |
-| `closed` | — | grey | 7 | SessionEnd (Claude) |
+| State | Animation | Label Color | Trigger |
+|---|---|---|---|
+| `idle` | gentle float | orange | Stop / Done |
+| `thinking` | slow tilt | yellow | Prompt submitted |
+| `reading` | fast float | blue | Read, WebFetch |
+| `editing` | wiggle | green | Edit, Write |
+| `searching` | fast tilt | purple | Grep, Glob, WebSearch |
+| `running` | fast wiggle | orange | Bash, terminal, MCP tools |
+| `delegating` | side bounce | blue | Agent, Skill, SubagentStart |
+| `waiting` | pulse | orange | Permission prompt |
+| `error` | shake 3× | red | StopFailure, errorOccurred |
+| `offline` | slow breathing | grey | timeout/unknown sessionEnd |
+| `closed` | — | grey | SessionEnd (Claude) |
 
 Both Claude Code and GitHub Copilot now use the same fine-grained states for tool use.
 
