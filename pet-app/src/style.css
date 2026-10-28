@@ -292,6 +292,18 @@ body:not(.placed) {
   animation: pop-in 0.4s ease-out forwards;
 }
 
+/* Emote without a picture for the current pose: a few quick hops while the bubble carries the words.
+   After the state rules, so it wins over them while both classes are set. */
+@keyframes emote-hop {
+  0%, 100% { transform: translateY(0) scale(1); }
+  30% { transform: translateY(-10px) scale(1.05); }
+  60% { transform: translateY(0) scale(0.97); }
+}
+
+.anim-emote #sprite-wrapper, .anim-emote #ascii-art {
+  animation: emote-hop 0.5s ease-out 3;
+}
+
 /* Motion off (Settings toggle or pack "motion": "none"): body class outranks the .anim-* rules above */
 body.no-motion #sprite-wrapper, body.no-motion #ascii-art {
   animation: none;

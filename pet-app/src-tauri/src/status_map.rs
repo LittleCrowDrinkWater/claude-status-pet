@@ -20,7 +20,7 @@ pub fn event_to_state(event: &str) -> &'static str {
     match event {
         "prompt" => "thinking",
         "tool" => "running", // refined by tool_to_state
-        "done" => "idle",
+        "done" | "start" => "idle",
         "error" => "error",
         "offline" => "offline",
         "closed" => "closed",

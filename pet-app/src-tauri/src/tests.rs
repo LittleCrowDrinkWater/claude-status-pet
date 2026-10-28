@@ -8,6 +8,7 @@ fn test_event_to_state() {
     assert_eq!(status_map::event_to_state("prompt"), "thinking");
     assert_eq!(status_map::event_to_state("tool"), "running");
     assert_eq!(status_map::event_to_state("done"), "idle");
+    assert_eq!(status_map::event_to_state("start"), "idle");
     assert_eq!(status_map::event_to_state("error"), "error");
     assert_eq!(status_map::event_to_state("offline"), "offline");
     assert_eq!(status_map::event_to_state("wait"), "waiting");
@@ -155,6 +156,14 @@ fn test_claude_stop() {
     let stdin = make_stdin(Some("Stop"), None, None, Some("s1"), Some("/proj"));
     let ev = adapter::claude::ClaudeAdapter.parse(&stdin).unwrap();
     assert_eq!(ev.event, "done");
+}
+
+#[test]
+fn test_claude_session_start_is_start() {
+    let stdin = make_stdin(Some("SessionStart"), None, None, Some("s1"), Some("/proj"));
+    let ev = adapter::claude::ClaudeAdapter.parse(&stdin).unwrap();
+    assert_eq!(ev.event, "start");
+    assert_eq!(status_map::event_to_state(&ev.event), "idle");
 }
 
 #[test]

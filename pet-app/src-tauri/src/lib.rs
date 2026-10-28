@@ -1,5 +1,6 @@
 use notify::{EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 
 pub mod adapter;
+pub mod emote;
 pub mod session_meta;
 pub mod speech;
 pub mod status_map;
@@ -221,7 +223,15 @@ fn spawn_status_file_watcher(status_file: PathBuf, handle: tauri::AppHandle) {
     let mut last_content = None;
     emit_status_if_changed(&status_file, &mut last_content, &handle);
     let log_path = status_file.clone();
+    let emote_file = emote::emote_file_for_status(&status_file);
+    let mut last_emote = None;
     spawn_dir_watcher(dir, log_path.clone(), move |event| {
+        if let Some(emote_file) = emote_file.as_ref().filter(|f| event.paths.contains(f)) {
+            if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
+                emit_emote_if_changed(emote_file, &mut last_emote, &handle);
+            }
+            return;
+        }
         if !event.paths.contains(&status_file) {
             return;
         }
@@ -292,15 +302,51 @@ fn emit_status_if_changed(
     true
 }
 
+/// Emits the emote file's content unless it equals what was emitted last: one rename-replace
+/// reports Modify and Create for the same write.
+fn emit_emote_if_changed(
+    emote_file: &Path,
+    last_content: &mut Option<String>,
+    handle: &tauri::AppHandle,
+) {
+    let Ok(content) = fs::read_to_string(emote_file) else {
+        return;
+    };
+    if last_content.as_deref() == Some(content.as_str()) {
+        return;
+    }
+    if let Some(payload) = emote::parse_emote(&content) {
+        debug_log(
+            emote_file,
+            &format!("Emote: {} for {}", payload.emote, payload.session_id),
+        );
+        let _ = handle.emit("emote", payload);
+    }
+    *last_content = Some(content);
+}
+
 /// Aggregate mode: pings the frontend whenever any status-*.json changes; the frontend then
-/// re-reads the whole list via list_all_sessions, so the payload carries no data.
+/// re-reads the whole list via list_all_sessions, so the payload carries no data. An emote
+/// file is passed on whole: it belongs to one moment, not to the session list.
 fn spawn_sessions_watcher(handle: tauri::AppHandle) {
     let pet_dir = default_pet_dir();
+    let mut last_emotes: HashMap<PathBuf, Option<String>> = HashMap::new();
     spawn_dir_watcher(pet_dir.clone(), pet_dir, move |event| {
-        let touches_status = event.paths.iter().any(|p| {
-            p.file_name()
-                .is_some_and(|n| is_status_file_name(&n.to_string_lossy()))
-        });
+        let mut touches_status = false;
+        for path in &event.paths {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if is_status_file_name(&name) {
+                touches_status = true;
+            } else if emote::is_emote_file_name(&name)
+                && matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
+            {
+                let last = last_emotes.entry(path.clone()).or_default();
+                emit_emote_if_changed(path, last, &handle);
+            }
+        }
         if touches_status {
             let _ = handle.emit("sessions-changed", ());
         }
@@ -853,12 +899,13 @@ fn cmd_write_status(args: &[String]) {
     } else {
         // Lets the aggregate pet drop a session whose Claude process died without a SessionEnd hook
         let claude_process = current_claude_process(previous.as_ref());
+        let now = unix_millis();
         let meta = session_meta::next_meta(
             previous.as_ref(),
             ev.prompt.as_deref(),
             ev.session_title.as_deref(),
             state,
-            unix_millis(),
+            now,
             || session_meta::git_branch(&ev.cwd),
         );
         let thought = ev
@@ -878,6 +925,12 @@ fn cmd_write_status(args: &[String]) {
             "thought": thought, "reply": reply
         });
         write_status_file(&status_file, &status.to_string());
+        // Written after the status, so the pet already shows the state the emote plays over
+        if let Some(name) =
+            emote::auto_emote(&ev.event, ev.prompt.as_deref(), meta.turn_started, now)
+        {
+            write_emote_file(&pet_dir, session_id, name, String::new(), None, now);
+        }
     }
 
     // Output session info to stdout (hook script captures this to launch GUI)
@@ -909,6 +962,128 @@ fn write_status_file(status_file: &Path, content: &str) {
     }
 }
 
+fn write_emote_file(
+    pet_dir: &Path,
+    session_id: &str,
+    name: &str,
+    say: String,
+    ms: Option<u64>,
+    now: u64,
+) -> PathBuf {
+    let payload = emote::EmotePayload {
+        emote: name.to_string(),
+        say,
+        ms,
+        at: now,
+        session_id: session_id.to_string(),
+    };
+    let file = emote::emote_file(pet_dir, session_id);
+    write_status_file(&file, &serde_json::to_string(&payload).unwrap_or_default());
+    file
+}
+
+/// The session of the Claude process this command runs under: the status file that recorded
+/// that process, or else the most recently written status file.
+fn session_of_caller(pet_dir: &Path) -> Option<String> {
+    let claude = find_claude_ancestor();
+    let mut newest: Option<(std::time::SystemTime, String)> = None;
+    for entry in fs::read_dir(pet_dir).ok()?.filter_map(|e| e.ok()) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(sid) = name
+            .strip_prefix("status-")
+            .and_then(|n| n.strip_suffix(".json"))
+        else {
+            continue;
+        };
+        if claude.is_some() {
+            let content = fs::read_to_string(entry.path()).unwrap_or_default();
+            if parse_claude_process(&content) == claude {
+                return Some(sid.to_string());
+            }
+        }
+        if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
+            if newest.as_ref().is_none_or(|(latest, _)| modified > *latest) {
+                newest = Some((modified, sid.to_string()));
+            }
+        }
+    }
+    newest.map(|(_, sid)| sid)
+}
+
+/// CLI: emote subcommand. Writes emote-<session>.json for the pet to play; the session comes
+/// from --session-id, else CLAUDE_CODE_SESSION_ID, else the calling Claude process.
+fn cmd_emote(args: &[String]) {
+    let name = args.get(2).map(String::as_str).unwrap_or_default();
+    if !emote::is_valid_emote_name(name) {
+        eprintln!("Usage: claude-status-pet emote <name> [--say <text>] [--ms <millis>] [--session-id <id>]");
+        std::process::exit(1);
+    }
+    let pet_dir = default_pet_dir();
+    let _ = fs::create_dir_all(&pet_dir);
+    let session_id = get_arg(args, "--session-id")
+        .or_else(|| std::env::var("CLAUDE_CODE_SESSION_ID").ok())
+        .filter(|id| is_safe_session_id(id))
+        .or_else(|| session_of_caller(&pet_dir));
+    let Some(session_id) = session_id else {
+        eprintln!("No session found; pass --session-id");
+        std::process::exit(1);
+    };
+    let say = get_arg(args, "--say").unwrap_or_default();
+    let ms = get_arg(args, "--ms").and_then(|v| v.parse().ok());
+    let file = write_emote_file(&pet_dir, &session_id, name, say, ms, unix_millis());
+    println!("{}\t{}", file.to_string_lossy(), session_id);
+}
+
+/// CLI: emotes subcommand. Lists the emotes of the character the pet shows, one per line as
+/// name, poses and play time, from the pack the GUI recorded in config.json.
+fn cmd_emotes() {
+    let pet_dir = default_pet_dir();
+    let character = fs::read_to_string(pet_dir.join("config.json"))
+        .ok()
+        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+        .and_then(|v| v["character"].as_str().map(str::to_string));
+    let Some(character) = character else {
+        eprintln!("No character recorded yet; start the pet once");
+        return;
+    };
+    let pack = ["assets", "characters"]
+        .iter()
+        .map(|dir| pet_dir.join(dir).join(&character).join("character.json"))
+        .find_map(|path| fs::read_to_string(path).ok())
+        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok());
+    let Some(emotes) = pack.as_ref().and_then(|v| v["emotes"].as_object()) else {
+        eprintln!("{} has no emotes; the pet hops instead", character);
+        return;
+    };
+    for (name, spec) in emotes {
+        let poses: Vec<&str> = spec
+            .as_object()
+            .map(|o| {
+                o.keys()
+                    .filter(|k| *k != "ms")
+                    .map(String::as_str)
+                    .collect()
+            })
+            .unwrap_or_default();
+        println!(
+            "{}\t{}\t{}",
+            name,
+            poses.join(","),
+            spec["ms"].as_u64().unwrap_or(0)
+        );
+    }
+}
+
+/// Records the character the pet shows, so the emotes command can read its pack
+#[tauri::command]
+fn set_character(character: String) {
+    if !is_safe_session_id(&character) {
+        return;
+    }
+    let config = serde_json::json!({ "character": character });
+    write_status_file(&default_pet_dir().join("config.json"), &config.to_string());
+}
+
 fn is_temp_status_file_name(name: &str) -> bool {
     name.starts_with(".status-") && name.ends_with(".tmp")
 }
@@ -921,7 +1096,10 @@ fn cleanup_stale_status(pet_dir: &PathBuf) {
     for entry in entries.filter_map(|e| e.ok()) {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if is_status_file_name(&name_str) || is_temp_status_file_name(&name_str) {
+        if is_status_file_name(&name_str)
+            || is_temp_status_file_name(&name_str)
+            || emote::is_emote_file_name(&name_str)
+        {
             if let Ok(meta) = entry.metadata() {
                 if let Ok(modified) = meta.modified() {
                     if modified < cutoff {
@@ -1365,6 +1543,17 @@ pub fn run() {
         cmd_write_status(&args);
         std::process::exit(0); // Force exit — don't wait for stdin reader thread
     }
+    match args.get(1).map(String::as_str) {
+        Some("emote") => {
+            cmd_emote(&args);
+            std::process::exit(0);
+        }
+        Some("emotes") => {
+            cmd_emotes();
+            std::process::exit(0);
+        }
+        _ => {}
+    }
 
     init_debug();
 
@@ -1444,7 +1633,8 @@ pub fn run() {
             list_all_sessions,
             is_aggregate_mode,
             bind_session,
-            update_assets
+            update_assets,
+            set_character
         ])
         .setup(move |app| {
             let window = app.get_webview_window("main").unwrap();

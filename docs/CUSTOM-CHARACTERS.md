@@ -94,6 +94,17 @@ Create `<pack-dir>/character.json`:
   - Transition frames are single PNGs, not APNG: the app has to play them backwards and stop them midway.
   - Every frame change cross-fades over 110ms, and the first `sit_down` frame takes over when the desk slide is 80% done. Give each frame at least about 120ms; uneven timing (slower at the start and end of the move) reads more natural than equal steps.
   - `open_laptop` is optional. Right-click → Settings → Desk scene turns the scene off.
+- Optional `"emotes"` gives the character expressions the pet plays for a few seconds on request (the `/emote` skill, some hook events, or a click on the pet), then returns to the state's image:
+
+  ```json
+  "emotes": {
+    "cheer": { "ms": 2500, "seated": ["my-pet/emotes/cheer-seated.png"] },
+    "wave":  { "ms": 2500, "seated": ["my-pet/emotes/wave-seated.png"], "standing": ["my-pet/emotes/wave.png"] }
+  }
+  ```
+
+  - `ms` is how long it plays. Every other key is a pose: `seated` is used while the desk scene has the character at the desk, `standing` otherwise. An emote without a picture for the current pose makes the pet hop instead. Each pose is a list; one picture is picked at random.
+  - Names the `/emote` skill sends: cheer, wave, nod, sorry, surprised, blush, puzzled, thanks.
 
 ## Step 4: Verify
 

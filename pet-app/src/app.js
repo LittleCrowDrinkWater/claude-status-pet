@@ -138,6 +138,8 @@ const ASCII_SPECIES = {
 const GIF_MODES = {};
 // Packs whose character.json sets "motion": "none" ship their own frame animation
 const STATIC_MOTION_PACKS = new Set();
+// Emotes a pack ships, by pack id: { cheer: { ms: 2500, seated: ['pack/emotes/cheer-seated.png'] } }
+const CHARACTER_EMOTES = {};
 
 function registerCharacter(id, jsonStr) {
   const config = JSON.parse(jsonStr);
@@ -146,6 +148,8 @@ function registerCharacter(id, jsonStr) {
   else delete CHARACTER_SCENES[id];
   if (config.motion === 'none') STATIC_MOTION_PACKS.add(id);
   else STATIC_MOTION_PACKS.delete(id);
+  if (config.emotes) CHARACTER_EMOTES[id] = config.emotes;
+  else delete CHARACTER_EMOTES[id];
 }
 
 // Reads <id>/character.json from the DLC or custom characters dir; false when missing or unreadable
@@ -472,18 +476,25 @@ function updateStatus(status) {
 
   // Before the character: the ASCII frame speed is read from currentState
   playStateAnimation(state);
-  // Sprites at the same desk cross-fade; the usual fade through transparent would blink the whole desk
-  if (!sceneOwnsSprite()) {
+  if (sceneOwnsSprite()) {
+    // The desk transition draws the character itself and ends on the state's own image
+    endEmote(false);
+  } else if (!emoteActive) {
+    // Sprites at the same desk cross-fade; the usual fade through transparent would blink the whole desk
     if (sceneIsSeated()) crossfadeSeatedSwap(state);
     else renderCharacter(state);
   }
 
   stateLabel.textContent = state;
+  lastStatus = { state, detail };
+  renderBubble(state, detail);
+}
+
+// Speech bubble — always visible for active states, 30s timeout for idle/offline
+function renderBubble(state, detail) {
   bubble.classList.toggle('thought', WORKING_STATES.has(state));
   // Long texts are cut to two lines; hovering shows the rest
   statusText.title = detail;
-
-  // Speech bubble — always visible for active states, 30s timeout for idle/offline
   if (detail && state !== 'offline') {
     if (statusText.textContent !== detail) {
       bubble.style.transition = 'none';
@@ -794,6 +805,7 @@ async function downloadAndSelectDlc(dlcName) {
 async function selectChar(newMode) {
   mode = newMode;
   localStorage.setItem('petMode', mode);
+  recordCharacter();
   closeMenu();
   applyMotion();
   currentImgSrc = '';
@@ -834,9 +846,33 @@ menuBackdrop.addEventListener('click', closeMenu);
 menuBackdrop.addEventListener('contextmenu', (e) => { e.preventDefault(); closeMenu(); });
 window.addEventListener('blur', closeMenu);
 
-// Drag — single handler for all draggable elements
-for (const el of [imgWrapper, asciiPre, bubble, stateLabel]) {
-  el.addEventListener('mousedown', startDrag);
+// Press and move drags the window. A short press without movement on the character is a
+// click, which could not exist while the native drag began on mousedown.
+const DRAG_START_PX = 4;
+const CLICK_MAX_MS = 400;
+
+function installPressHandlers(el, onClick) {
+  let press = null;
+  el.addEventListener('mousedown', (e) => {
+    if (e.button === 0) press = { x: e.screenX, y: e.screenY, at: Date.now() };
+  });
+  el.addEventListener('mousemove', (e) => {
+    if (press && (Math.abs(e.screenX - press.x) >= DRAG_START_PX || Math.abs(e.screenY - press.y) >= DRAG_START_PX)) {
+      press = null;
+      startDrag();
+    }
+  });
+  el.addEventListener('mouseup', () => {
+    const clicked = press && Date.now() - press.at <= CLICK_MAX_MS;
+    press = null;
+    if (clicked && onClick) onClick();
+  });
+  el.addEventListener('mouseleave', () => { press = null; });
+}
+
+for (const el of [bubble, stateLabel]) installPressHandlers(el, null);
+for (const el of [imgWrapper, asciiPre]) {
+  installPressHandlers(el, () => { if (!emoteActive) playEmote(pickRandom(CLICK_EMOTES)); });
 }
 
 // ── Session picker ──
@@ -891,6 +927,9 @@ let displayedSessionId = '';
 let displayedSince = 0;
 let lastAggregateKey = '';
 let aggregateRenderTimer = null;
+let emoteSessionId = '';
+let emoteSessionUntil = 0;
+let emoteSessionTimer = null;
 
 function sessionPriority(session) {
   return STATE_PRIORITY[session.state] || 0;
@@ -966,10 +1005,13 @@ function renderAggregate() {
     applyAggregateStatus({ state: 'offline', detail: '', session_name: 'No session' });
     return;
   }
-  let pick = aggregateSessions.find(s => s.session_id === pinnedSessionId) || aggregateSessions[0];
+  // The session an emote belongs to is shown while it plays, whatever the others are doing
+  const emoteSession = Date.now() < emoteSessionUntil
+    ? aggregateSessions.find(s => s.session_id === emoteSessionId) : null;
+  let pick = emoteSession || aggregateSessions.find(s => s.session_id === pinnedSessionId) || aggregateSessions[0];
   const current = aggregateSessions.find(s => s.session_id === displayedSessionId);
   const heldFor = Date.now() - displayedSince;
-  if (!pinnedSessionId && current && pick !== current && heldFor < MIN_DISPLAY_MS
+  if (!emoteSession && !pinnedSessionId && current && pick !== current && heldFor < MIN_DISPLAY_MS
       && sessionPriority(pick) <= sessionPriority(current)) {
     aggregateRenderTimer = setTimeout(renderAggregate, MIN_DISPLAY_MS - heldFor);
     pick = current;
@@ -1078,6 +1120,111 @@ async function startAggregateMode() {
   await refreshSessions();
 }
 
+// ── Emotes: a short expression over the current state, asked for by the emote command, a hook or a click ──
+const EMOTE_DEFAULT_MS = 2500;
+// An emote file written before this pet watched the session is not replayed
+const EMOTE_MAX_AGE_MS = 10000;
+// A desk transition may be playing when the emote arrives; wait this long for it to finish
+const EMOTE_WAIT_MS = 4000;
+const CLICK_EMOTES = ['blush', 'cheer'];
+let emoteActive = null;
+let emoteTimer = null;
+let emoteWaitTimer = null;
+let lastStatus = { state: 'idle', detail: '' };
+
+function emoteDuration(name, ms) {
+  return ms || CHARACTER_EMOTES[mode]?.[name]?.ms || EMOTE_DEFAULT_MS;
+}
+
+// The pack's picture for the pose the character is in now, or null for the generic hop
+function emoteSprite(name) {
+  const pose = sceneIsSeated() ? 'seated' : 'standing';
+  const sources = CHARACTER_EMOTES[mode]?.[name]?.[pose];
+  return sources && sources.length ? pickRandom(sources) : null;
+}
+
+function playEmote(name, say = '', ms = 0, waitedMs = 0) {
+  clearTimeout(emoteWaitTimer);
+  emoteWaitTimer = null;
+  if (sceneOwnsSprite()) {
+    if (waitedMs < EMOTE_WAIT_MS) emoteWaitTimer = setTimeout(() => playEmote(name, say, ms, waitedMs + 100), 100);
+    return;
+  }
+  endEmote(false);
+  const duration = emoteDuration(name, ms);
+  const token = { name, until: Date.now() + duration };
+  emoteActive = token;
+  const src = emoteSprite(name);
+  if (src) {
+    const apply = () => (sceneIsSeated() ? crossfadeSprite(() => showEmoteImage(src)) : showEmoteImage(src));
+    if (assetCache[src] || !hasExternalAssets) apply();
+    else loadAsset(src).then(() => { if (emoteActive === token && assetCache[src]) apply(); });
+  } else {
+    // Re-adding the class restarts the keyframes for a second emote in a row
+    container.classList.remove('anim-emote');
+    void container.offsetWidth;
+    container.classList.add('anim-emote');
+  }
+  if (say) showSay(say, duration);
+  emoteTimer = setTimeout(() => endEmote(true), duration);
+}
+
+// Clearing src first replays the APNG from its first frame when the same emote was shown a moment ago
+function showEmoteImage(src) {
+  const resolved = assetCache[src] || src;
+  showImage();
+  imgEl.src = '';
+  imgEl.src = resolved;
+  imgEl.style.opacity = '1';
+  currentImgSrc = requestedImgSrc = resolved;
+  spriteKey = '';
+}
+
+function endEmote(redraw) {
+  clearTimeout(emoteTimer);
+  emoteTimer = null;
+  if (!emoteActive) return;
+  emoteActive = null;
+  container.classList.remove('anim-emote');
+  if (!redraw || sceneOwnsSprite()) return;
+  spriteKey = '';
+  if (sceneIsSeated()) crossfadeSeatedSwap(currentState);
+  else renderCharacter(currentState, true);
+}
+
+// The line sits in the bubble for the emote's duration, then the status text comes back
+function showSay(text, duration) {
+  statusText.textContent = text;
+  statusText.title = text;
+  bubble.classList.remove('thought', 'hidden');
+  clearTimeout(bubbleTimeout);
+  bubbleTimeout = setTimeout(() => renderBubble(lastStatus.state, lastStatus.detail), duration);
+}
+
+function onEmote(payload) {
+  if (!payload || !payload.emote || Date.now() - (payload.at || 0) > EMOTE_MAX_AGE_MS) return;
+  if (aggregateMode) {
+    if (!aggregateSessions.some(s => s.session_id === payload.session_id)) {
+      // A new session's first status and its greeting arrive together, before the list has it
+      if (!payload.retried) refreshSessions().then(() => onEmote({ ...payload, retried: true }));
+      return;
+    }
+    emoteSessionId = payload.session_id;
+    emoteSessionUntil = Date.now() + emoteDuration(payload.emote, payload.ms);
+    renderAggregate();
+    clearTimeout(emoteSessionTimer);
+    emoteSessionTimer = setTimeout(renderAggregate, emoteSessionUntil - Date.now() + 50);
+  } else if (boundSessionId && payload.session_id !== boundSessionId) {
+    return;
+  }
+  playEmote(payload.emote, payload.say || '', payload.ms || 0);
+}
+
+// Lets the emotes command read the shown character's pack without the GUI
+function recordCharacter() {
+  if (window.__TAURI__) window.__TAURI__.core.invoke('set_character', { character: mode }).catch(() => {});
+}
+
 // ── Listen for status updates ──
 if (window.__TAURI__) {
   const revealPet = () => document.body.classList.add('placed');
@@ -1090,6 +1237,7 @@ if (window.__TAURI__) {
   const reassertTopmost = () => window.__TAURI__.window.getCurrentWindow().setAlwaysOnTop(true).catch(() => {});
   window.addEventListener('blur', reassertTopmost);
   setInterval(reassertTopmost, 10000);
+  window.__TAURI__.event.listen('emote', (e) => onEmote(e.payload));
   window.__TAURI__.core.invoke('is_aggregate_mode').then((isAggregate) => {
     if (isAggregate) {
       startAggregateMode();
@@ -1183,6 +1331,9 @@ async function preloadAssets() {
   if (GIF_MODES[mode]) {
     for (const gifs of Object.values(GIF_MODES[mode])) for (const g of gifs) paths.push(g);
   }
+  for (const emote of Object.values(CHARACTER_EMOTES[mode] || {})) {
+    for (const sources of Object.values(emote)) if (Array.isArray(sources)) paths.push(...sources);
+  }
   await Promise.all([...new Set(paths)].map(p => loadAsset(p)));
 }
 
@@ -1249,6 +1400,7 @@ async function preloadAssets() {
     await preloadAssets();
   }
 
+  recordCharacter();
   applyConfig();
   // The sprite maps were still the bundled defaults when the first status arrived
   spriteKey = '';

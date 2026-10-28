@@ -25,7 +25,8 @@ claude-status-pet/
 │   │   └── plugin.json      # Plugin manifest (DO NOT add "hooks" — auto-discovered)
 │   ├── hooks/
 │   │   └── hooks.json       # Claude Code hooks → calls binary with --adapter claude
-│   └── skills/pet/SKILL.md  # /pet skill for Claude Code
+│   ├── skills/pet/SKILL.md  # /pet skill for Claude Code
+│   └── skills/emote/SKILL.md # /emote skill: Claude asks the pet for an expression
 ├── copilot/
 │   ├── plugin.json         # Copilot CLI plugin manifest
 │   ├── hooks.json           # GitHub Copilot CLI hooks → calls binary with --adapter copilot
@@ -60,6 +61,7 @@ claude-status-pet/
 │   └── src-tauri/           # Rust backend
 │       ├── src/
 │       │   ├── lib.rs       # GUI mode + write-status CLI + DLC download + assets auto-download
+│       │   ├── emote.rs     # Emote file format and the emotes hook events earn on their own
 │       │   ├── adapter/     # Hook adapters (one per AI agent)
 │       │   │   ├── mod.rs   # Adapter trait + registry + StdinInput struct
 │       │   │   ├── claude.rs   # Claude Code adapter
@@ -86,6 +88,8 @@ claude-status-pet write-status --adapter vscode          # CLI: VS Code Copilot 
 claude-status-pet write-status --event tool --tool edit  # CLI: generic args, any agent
 claude-status-pet run --status-file <path>                # GUI: launch Tauri window
 claude-status-pet demo --assets-dir <path>               # GUI: cycle all states for recording
+claude-status-pet emote <name> [--say <text>] [--ms <n>]  # CLI: ask the pet to play an emote
+claude-status-pet emotes                                 # CLI: list the shown character's emotes
 ```
 
 - `write-status` is the **hot path** — called on every hook event. Must complete in <100ms.
@@ -93,6 +97,7 @@ claude-status-pet demo --assets-dir <path>               # GUI: cycle all states
 - `write-status` ends with `process::exit(0)` to kill any lingering stdin reader thread.
 - `write-status` does NOT spawn child processes (PowerShell `&` waits for all children).
 - `run` is the long-lived GUI process that watches the status file.
+- `emote` writes `emote-{session_id}.json` the same way (temp file + rename); the session comes from `--session-id`, else `CLAUDE_CODE_SESSION_ID`, else the calling Claude process. `write-status` writes one too when a hook event earns an emote (`emote.rs`).
 
 ## Adapter System
 
@@ -138,6 +143,7 @@ Characters defined by `character.json` files:
 - **Bundled**: no image character; the default and fallback is the ASCII buddy `chonk` (`DEFAULT_MODE` in app.js)
 - **DLC**: `~/.claude/pet-data/assets/{mona,kuromi,gopher,fluent-emoji,...}/character.json` (downloaded by `download_dlc` Rust command using `ureq` HTTP client)
 - **Custom**: `~/.claude/pet-data/characters/*/character.json` (user-installed packs)
+- A pack may carry an `emotes` block (docs/CUSTOM-CHARACTERS.md). The GUI records the shown character in `~/.claude/pet-data/config.json` (`set_character`) so the `emotes` CLI can read that pack.
 
 DLC download is async (`spawn_blocking`) with 30s HTTP timeout per file. Auto-downloads missing DLC on startup if selected character requires it.
 
@@ -265,3 +271,15 @@ Use the `/release` skill or manually:
 - `claude_pid` / `claude_started`: the `claude.exe` ancestor (Windows only), reused from the previous status while that process still runs.
 - `title`, `branch`, `turn_started`, `state_since`: carried across events by `session_meta.rs`. `title` is the `/rename` name or else the first prompt; `turn_started` resets on each prompt; `state_since` resets only when the state group changes (all busy states form one "working" group). Times are Unix ms.
 - `thought` / `reply` (Claude Code only, never carried over): `thought` is the text Claude wrote before this tool call, found by `tool_use_id` within the last 256KB of `transcript_path`; null when it wrote nothing or the transcript has not caught up (it is written asynchronously, never wait for it). `reply` is the first sentence of `last_assistant_message` on Stop, markdown stripped, at most 120 chars.
+
+## Emote File Format
+
+`~/.claude/pet-data/emote-{session_id}.json`, written by `emote` and by `write-status` for the automatic emotes (session start → wave, failed turn → sorry, a turn of five minutes or more → cheer, thanks or praise in a short prompt → thanks or blush):
+
+```json
+{"emote": "cheer", "say": "搞定了", "ms": null, "at": 1791863090101, "session_id": "abc123"}
+```
+
+- `ms` null lets the character pack's `emotes.<name>.ms` decide the play time; `at` is Unix ms, and the GUI ignores files older than 10 s so a pet started later does not replay them.
+- The watcher emits an `emote` event in both the per-session and the aggregate pet; the aggregate pet shows the emote's session while it plays. The frontend keeps the emote picture through status updates and redraws the current state when it ends; a desk transition cancels it.
+- Stale emote files are cleaned up with the status files (>24h).

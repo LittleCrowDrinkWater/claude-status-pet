@@ -40,6 +40,7 @@ This document explains how hook events from different AI assistants are mapped t
 | `Stop` | `idle` | "Waiting for input" | Response complete |
 | `StopFailure` | `error` | "Something went wrong" | |
 | `SessionEnd` | `closed` | "Session ended" | Writes closed status, does NOT delete file |
+| `SessionStart` | `idle` | "Session started" | Also writes a wave emote |
 
 ### GitHub Copilot
 
@@ -92,6 +93,10 @@ VS Code agent mode hooks — PascalCase events from stdin `hookEventName`.
 | `SubagentStart` | `delegating` | "Spawning sub-agent..." | |
 | `SubagentStop` | `thinking` | "Sub-agent finished" | |
 | `Stop` | `idle` | "Done" | Session/response complete |
+
+## Emotes
+
+Besides the state, `write-status` writes `emote-{session}.json` when an event earns an expression, and the pet plays it for a few seconds over the state: `SessionStart` → wave, `StopFailure` (and Copilot's error events) → sorry, `Stop` after a turn of five minutes or more → cheer, a short prompt with thanks (谢谢 / thank) → thanks, with praise (真棒 / 辛苦了 / good job) → blush. Claude can ask for any emote through the `/emote` skill (`claude-status-pet emote <name> --say <text>`), and a click on the pet plays blush or cheer. Characters without a picture for an emote hop instead.
 
 ## Pet Status States
 

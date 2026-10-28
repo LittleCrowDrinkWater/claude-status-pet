@@ -82,10 +82,8 @@ impl Adapter for ClaudeAdapter {
             "Stop" => ("done".into(), String::new(), "Waiting for input".into()),
             "StopFailure" => ("error".into(), String::new(), "Something went wrong".into()),
             "SessionEnd" => ("closed".into(), String::new(), "Session ended".into()),
-            "SessionStart" => {
-                // Write initial idle status
-                ("done".into(), String::new(), "Session started".into())
-            }
+            // Its own event, so write-status can greet; the state is idle, as after "done"
+            "SessionStart" => ("start".into(), String::new(), "Session started".into()),
             _ => ("prompt".into(), String::new(), hook.to_string()),
         };
 
