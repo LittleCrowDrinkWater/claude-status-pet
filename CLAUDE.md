@@ -58,6 +58,7 @@ claude-status-pet/
 │   │   ├── style.css
 │   │   ├── app.js           # Character rendering, status updates, 2-level right-click menu
 │   │   ├── scene.js         # Pack desk scene: desk layer slides in, sit-down frames play forwards or backwards
+│   ├── debug/               # Debug page: the frontend in a plain browser with a status and emote panel
 │   └── src-tauri/           # Rust backend
 │       ├── src/
 │       │   ├── lib.rs       # GUI mode + write-status CLI + DLC download + assets auto-download
@@ -235,6 +236,8 @@ cargo clippy --all-targets -- -D warnings
 ```
 
 CI runs all three on Ubuntu, Windows and macOS; any rustfmt diff or clippy warning fails the build.
+
+Frontend, without rebuilding the app: `node pet-app/debug/serve.mjs` serves http://localhost:1421/ with the real `app.js` and `scene.js`, a stand-in for the Tauri API (`debug/shim.js`) and a panel that sends the same status and emote events the backend does. Packs come from `~/.claude/pet-data`; the page has its own localStorage.
 
 ## Releasing
 

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Status Pet debug</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/style.css">
+  <link rel="stylesheet" href="debug.css">
+</head>
+<body>
+  <div id="debug-layout">
+    <div id="stage-area">
+      <!-- Same markup as src/index.html: app.js and scene.js look these ids up -->
+      <div id="pet-container">
+        <div id="speech-bubble" class="hidden">
+          <span id="status-text"></span>
+        </div>
+        <div id="pet-stage">
+          <div id="sprite-wrapper">
+            <img id="sprite-img" alt="" draggable="false">
+          </div>
+          <img id="fade-layer" alt="" aria-hidden="true" draggable="false">
+          <div id="desk-holder">
+            <img id="desk-layer" alt="" aria-hidden="true" draggable="false">
+          </div>
+        </div>
+        <pre id="ascii-art" style="display:none;"></pre>
+        <div id="session-name"></div>
+        <div id="state-label">idle</div>
+      </div>
+      <div id="menu-backdrop" class="hidden"></div>
+      <div id="char-menu" class="hidden"></div>
+    </div>
+
+    <aside id="panel">
+      <section>
+        <h3>角色</h3>
+        <div class="row">
+          <select id="char-select"></select>
+          <button id="char-refresh">刷新列表</button>
+          <label><input type="checkbox" id="desk-toggle"> 桌前场景</label>
+          <label><input type="checkbox" id="motion-toggle"> 程序动效</label>
+          <label><input type="checkbox" id="speech-toggle"> 说话</label>
+          <label>缩放 <input type="range" id="scale-input" min="1" max="2" step="0.1"></label>
+        </div>
+      </section>
+      <section>
+        <h3>状态（和钩子写进状态文件的一样）</h3>
+        <div class="row"><input type="text" id="detail-input" placeholder="气泡文字，留空用默认" size="40"></div>
+        <div class="buttons" id="state-buttons"></div>
+        <div class="row"><button id="cycle-toggle">自动轮播状态</button></div>
+      </section>
+      <section>
+        <h3>表情（和 emote 命令写的文件一样）</h3>
+        <div class="row">
+          <input type="text" id="say-input" placeholder="台词，留空不说话" size="30">
+          <input type="text" id="ms-input" placeholder="时长 ms，留空按角色包" size="16">
+        </div>
+        <div class="buttons" id="emote-buttons"></div>
+        <div class="row">
+          <input type="text" id="emote-name" placeholder="其他名字（没图时跳一跳）" size="24">
+          <button id="custom-emote">播放</button>
+        </div>
+      </section>
+      <section>
+        <h3>当前</h3>
+        <div id="debug-info"></div>
+      </section>
+      <section>
+        <h3>日志</h3>
+        <div id="debug-log"></div>
+      </section>
+      <section>
+        <h3>怎么用</h3>
+        <div class="row">右键角色打开菜单；按住拖动 4 像素以上记一次 startDragging；短按角色随机害羞或欢呼。连点两次同一个表情看第二次是否从头播；先点 editing 再马上点表情，看是否等坐下播完。</div>
+      </section>
+    </aside>
+  </div>
+  <script src="shim.js"></script>
+  <script src="/src/scene.js"></script>
+  <script src="/src/app.js"></script>
+  <script src="panel.js"></script>
+</body>
+</html>
